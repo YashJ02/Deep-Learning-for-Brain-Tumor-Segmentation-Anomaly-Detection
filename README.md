@@ -1,1 +1,1 @@
-# Deep-Learning-for-Brain-Tumor-Segmentation-Anomaly-Detection-Academic-
+# Deep-Learning-for-Brain-Tumor-Segmentation-Anomaly-Detection
