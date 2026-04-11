@@ -88,6 +88,19 @@ def main() -> int:
         use_amp=True,
     )
 
+    task = str(details.get("task", "binary"))
+    class_counts: dict[str, int] = {}
+    if task == "multiclass" and isinstance(details.get("_class_label_map"), np.ndarray):
+        class_label_map = details["_class_label_map"]
+        output_array = class_label_map.astype(np.uint8)
+        class_counts = {
+            "1": int(np.count_nonzero(class_label_map == 1)),
+            "2": int(np.count_nonzero(class_label_map == 2)),
+            "4": int(np.count_nonzero(class_label_map == 4)),
+        }
+    else:
+        output_array = mask.astype(np.uint8)
+
     if args.output_mask is None:
         predictions_dir = ensure_dir(PROJECT_ROOT / "models" / "predictions")
         stem = input_path.name.replace(".nii.gz", "").replace(".nii", "")
@@ -96,7 +109,7 @@ def main() -> int:
         output_mask = _resolve_path(args.output_mask, PROJECT_ROOT)
         output_mask.parent.mkdir(parents=True, exist_ok=True)
 
-    mask_image = nib.Nifti1Image(mask.astype(np.uint8), image.affine, image.header)
+    mask_image = nib.Nifti1Image(output_array, image.affine, image.header)
     nib.save(mask_image, str(output_mask))
 
     spacing = tuple(float(value) for value in image.header.get_zooms()[:3])
@@ -107,10 +120,13 @@ def main() -> int:
     print("Ensemble inference complete")
     print(f"Input: {input_path}")
     print(f"Device: {device}")
+    print(f"Task: {task}")
     print(f"Used modality index: {used_modality}")
     print(f"Ensemble size: {details['ensemble_size']}")
     print(f"Predicted mask: {output_mask}")
     print(f"Detected voxels: {voxel_count}")
+    if class_counts:
+        print(f"Class voxel counts (BraTS labels): {class_counts}")
     print(f"Estimated volume: {volume_ml:.3f} mL")
 
     return 0

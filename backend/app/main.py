@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .mesh import build_mesh_from_mask
-from .metrics import compute_tumor_metrics
+from .metrics import BRATS_CLASS_DEFINITIONS, compute_class_metrics, compute_tumor_metrics
 from .segmentation import (
     available_fold_checkpoints,
     default_checkpoint_path,
@@ -111,7 +111,7 @@ async def segment(
                 if requested_fold_indices is not None
                 else None
             )
-            mask, inference_info = segment_tumor(
+            mask, inference_info, class_label_map = segment_tumor(
                 volume,
                 engine=engine,
                 threshold=threshold,
@@ -121,6 +121,29 @@ async def segment(
             mesh = build_mesh_from_mask(mask, spacing)
             brain_mask = extract_brain_mask(volume)
             brain_mesh = build_mesh_from_mask(brain_mask, spacing, target_max_dim=72)
+
+            class_metrics: dict = {}
+            class_meshes: list[dict] = []
+            if class_label_map is not None:
+                class_metrics = compute_class_metrics(class_label_map, spacing)
+                class_colors = {
+                    "1": "#f97316",
+                    "2": "#22c55e",
+                    "4": "#ef4444",
+                }
+                for class_label, descriptor in BRATS_CLASS_DEFINITIONS.items():
+                    label_key = str(class_label)
+                    class_mask = class_label_map == int(class_label)
+                    class_mesh = build_mesh_from_mask(class_mask, spacing, target_max_dim=80)
+                    class_meshes.append(
+                        {
+                            "label": int(class_label),
+                            "key": str(descriptor["key"]),
+                            "name": str(descriptor["name"]),
+                            "color": class_colors.get(label_key, "#f59e0b"),
+                            "mesh": class_mesh,
+                        }
+                    )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid request: {exc}") from exc
         except ValueError as exc:
@@ -141,8 +164,10 @@ async def segment(
         },
         "inference": inference_info,
         "metrics": metrics,
+        "class_metrics": class_metrics,
         "mesh": mesh,
         "brain_mesh": brain_mesh,
+        "class_meshes": class_meshes,
     }
 
 

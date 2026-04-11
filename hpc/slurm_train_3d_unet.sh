@@ -34,6 +34,7 @@ python scripts/prepare_brats_dataset.py \
 python scripts/train_brats_3d_unet.py \
   --train-csv data/splits/train.csv \
   --val-csv data/splits/val.csv \
+  --task multiclass \
   --epochs 150 \
   --batch-size 1 \
   --num-workers 8 \

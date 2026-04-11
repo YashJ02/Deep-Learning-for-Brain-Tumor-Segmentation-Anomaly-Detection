@@ -163,7 +163,7 @@ def segment_tumor(
     checkpoint_path: Optional[str] = None,
     ensemble_checkpoint_paths: Optional[Sequence[Path]] = None,
     threshold: float = 0.5,
-) -> Tuple[np.ndarray, Dict[str, object]]:
+) -> Tuple[np.ndarray, Dict[str, object], Optional[np.ndarray]]:
     engine = (engine or "auto").strip().lower()
     if engine not in {"auto", "deep", "ensemble", "baseline"}:
         raise ValueError("engine must be one of: auto, deep, ensemble, baseline")
@@ -181,6 +181,7 @@ def segment_tumor(
                     checkpoint_paths=ensemble_paths,
                     threshold=threshold,
                 )
+                class_label_map = details.pop("_class_label_map", None)
                 return ensemble_mask.astype(bool), {
                     "engine": "ensemble",
                     "checkpoint": None,
@@ -189,8 +190,8 @@ def segment_tumor(
                         for fold_index in (_extract_fold_index(path) for path in ensemble_paths)
                         if fold_index is not None
                     ],
-                    **details,
-                }
+                    **{key: value for key, value in details.items() if not key.startswith("_")},
+                }, class_label_map
             except Exception as exc:
                 if engine == "ensemble":
                     raise RuntimeError(f"Ensemble inference failed: {exc}") from exc
@@ -209,12 +210,13 @@ def segment_tumor(
                     checkpoint_path=checkpoint,
                     threshold=threshold,
                 )
+                class_label_map = details.pop("_class_label_map", None)
                 return deep_mask.astype(bool), {
                     "engine": "deep",
                     "checkpoint": str(checkpoint),
                     "fold_indices": [],
-                    **details,
-                }
+                    **{key: value for key, value in details.items() if not key.startswith("_")},
+                }, class_label_map
             except Exception as exc:
                 if engine == "deep":
                     raise RuntimeError(f"Deep model inference failed: {exc}") from exc
@@ -224,8 +226,9 @@ def segment_tumor(
     baseline_mask = segment_tumor_baseline(volume)
     return baseline_mask.astype(bool), {
         "engine": "baseline",
+        "task": "binary",
         "checkpoint": None,
         "fold_indices": [],
         "probability_mean": None,
         "probability_max": None,
-    }
+    }, None

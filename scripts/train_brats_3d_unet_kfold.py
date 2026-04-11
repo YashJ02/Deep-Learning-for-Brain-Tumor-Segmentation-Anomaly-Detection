@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--bce-weight", type=float, default=0.5)
+    parser.add_argument("--ce-weight", type=float, default=0.5)
+    parser.add_argument("--task", type=str, choices=["binary", "multiclass"], default="multiclass")
     parser.add_argument("--modality", type=str, choices=["flair", "t1", "t1ce", "t2"], default="t1ce")
     parser.add_argument("--target-shape", type=int, nargs=3, default=[128, 128, 128])
     parser.add_argument("--base-channels", type=int, default=16)
@@ -84,6 +86,10 @@ def _train_command(args: argparse.Namespace, fold_index: int, fold_root: Path, c
         str(args.weight_decay),
         "--bce-weight",
         str(args.bce_weight),
+        "--ce-weight",
+        str(args.ce_weight),
+        "--task",
+        args.task,
         "--modality",
         args.modality,
         "--target-shape",

@@ -20,7 +20,7 @@ function listOrNA(values) {
   return values && values.length ? values.join(", ") : "N/A";
 }
 
-function renderMetrics(metrics, inference) {
+function renderMetrics(metrics, inference, classMetrics = null) {
   const rows = [
     ["Detected", metrics.detected ? "Yes" : "No", metrics.detected ? "good" : "bad"],
     ["Tumor voxels", String(metrics.voxel_count)],
@@ -54,6 +54,16 @@ function renderMetrics(metrics, inference) {
         : inference.checkpoint || "N/A",
     ],
   ];
+
+  const classOrder = ["1", "2", "4"];
+  classOrder.forEach((label) => {
+    const entry = classMetrics?.[label];
+    if (!entry) {
+      return;
+    }
+    rows.push([`${entry.name} voxels`, String(entry.voxel_count), entry.detected ? "good" : ""]);
+    rows.push([`${entry.name} volume`, `${Number(entry.volume_ml || 0).toFixed(3)} mL`]);
+  });
 
   metricsGrid.innerHTML = rows
     .map(
@@ -153,12 +163,36 @@ async function loadCheckpointInventory() {
   }
 }
 
-function buildMeshTrace(mesh, { color, opacity, name }) {
+function scaledVertices(vertices, scale = 1) {
+  if (!Array.isArray(vertices) || vertices.length === 0 || scale === 1) {
+    return vertices;
+  }
+
+  const count = vertices.length;
+  const centroid = vertices.reduce(
+    (acc, point) => [acc[0] + point[0], acc[1] + point[1], acc[2] + point[2]],
+    [0, 0, 0],
+  );
+
+  const cx = centroid[0] / count;
+  const cy = centroid[1] / count;
+  const cz = centroid[2] / count;
+
+  return vertices.map((point) => [
+    cx + (point[0] - cx) * scale,
+    cy + (point[1] - cy) * scale,
+    cz + (point[2] - cz) * scale,
+  ]);
+}
+
+function buildMeshTrace(mesh, { color, opacity, name, scale = 1 }) {
+  const vertices = scaledVertices(mesh.vertices, scale);
+
   return {
     type: "mesh3d",
-    x: mesh.vertices.map((v) => v[0]),
-    y: mesh.vertices.map((v) => v[1]),
-    z: mesh.vertices.map((v) => v[2]),
+    x: vertices.map((v) => v[0]),
+    y: vertices.map((v) => v[1]),
+    z: vertices.map((v) => v[2]),
     i: mesh.faces.map((f) => f[0]),
     j: mesh.faces.map((f) => f[1]),
     k: mesh.faces.map((f) => f[2]),
@@ -177,13 +211,17 @@ function buildMeshTrace(mesh, { color, opacity, name }) {
   };
 }
 
-function renderMesh(tumorMesh, inputInfo, brainMesh = null) {
+function renderMesh(tumorMesh, inputInfo, brainMesh = null, classMeshes = []) {
   const viewer = document.getElementById("viewer");
 
   const hasTumor = Boolean(tumorMesh?.vertices?.length);
   const hasBrain = Boolean(brainMesh?.vertices?.length);
+  const usableClassMeshes = Array.isArray(classMeshes)
+    ? classMeshes.filter((entry) => Boolean(entry?.mesh?.vertices?.length))
+    : [];
+  const hasClassMeshes = usableClassMeshes.length > 0;
 
-  if (!hasTumor && !hasBrain) {
+  if (!hasTumor && !hasBrain && !hasClassMeshes) {
     Plotly.purge(viewer);
     setStatus("No renderable surfaces were detected in this volume.", "bad");
     return;
@@ -194,17 +232,29 @@ function renderMesh(tumorMesh, inputInfo, brainMesh = null) {
     traces.push(
       buildMeshTrace(brainMesh, {
         color: "#4c96ff",
-        opacity: 0.22,
+        opacity: 0.34,
         name: "Brain",
       }),
     );
   }
-  if (hasTumor) {
+  if (hasClassMeshes) {
+    usableClassMeshes.forEach((entry) => {
+      traces.push(
+        buildMeshTrace(entry.mesh, {
+          color: entry.color || "#f59e0b",
+          opacity: 0.78,
+          name: entry.name || `Class ${entry.label}`,
+          scale: 0.92,
+        }),
+      );
+    });
+  } else if (hasTumor) {
     traces.push(
       buildMeshTrace(tumorMesh, {
-        color: "#ff6b63",
-        opacity: 0.68,
+        color: "#ffb347",
+        opacity: 0.82,
         name: "Tumor",
+        scale: 0.92,
       }),
     );
   }
@@ -282,15 +332,19 @@ runBtn.addEventListener("click", async () => {
       throw new Error(payload.detail || "Segmentation request failed.");
     }
 
-    renderMetrics(payload.metrics, payload.inference);
-    renderMesh(payload.mesh, payload.input, payload.brain_mesh);
+    renderMetrics(payload.metrics, payload.inference, payload.class_metrics || {});
+    renderMesh(payload.mesh, payload.input, payload.brain_mesh, payload.class_meshes || []);
 
     const ensembleSuffix = Number.isFinite(payload.inference.ensemble_size)
       ? ` | Ensemble size: ${payload.inference.ensemble_size}`
       : "";
+    const taskSuffix = payload.inference.task ? ` | Task: ${payload.inference.task}` : "";
+    const classSuffix = Array.isArray(payload.class_meshes) && payload.class_meshes.length
+      ? ` | Class meshes: ${payload.class_meshes.length}`
+      : "";
 
     setStatus(
-      `Done. Engine: ${payload.inference.engine}${ensembleSuffix} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count} | Modality index: ${payload.input.modality_index}`,
+      `Done. Engine: ${payload.inference.engine}${ensembleSuffix}${taskSuffix}${classSuffix} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count} | Modality index: ${payload.input.modality_index}`,
       "good",
     );
   } catch (error) {

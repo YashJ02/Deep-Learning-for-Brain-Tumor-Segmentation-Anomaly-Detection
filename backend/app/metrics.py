@@ -5,6 +5,22 @@ from typing import Dict, Tuple
 import numpy as np
 
 
+BRATS_CLASS_DEFINITIONS = {
+    1: {
+        "key": "necrotic_non_enhancing_core",
+        "name": "Necrotic/Non-Enhancing Core",
+    },
+    2: {
+        "key": "peritumoral_edema",
+        "name": "Peritumoral Edema",
+    },
+    4: {
+        "key": "enhancing_tumor",
+        "name": "Enhancing Tumor",
+    },
+}
+
+
 def compute_tumor_metrics(mask: np.ndarray, spacing_mm: Tuple[float, float, float]) -> Dict[str, float]:
     voxel_count = int(np.count_nonzero(mask))
     total_voxels = int(mask.size)
@@ -53,3 +69,26 @@ def compute_tumor_metrics(mask: np.ndarray, spacing_mm: Tuple[float, float, floa
         "centroid_voxel": [float(x) for x in centroid_voxel.tolist()],
         "centroid_mm": [float(x) for x in centroid_mm.tolist()],
     }
+
+
+def compute_class_metrics(class_label_map: np.ndarray, spacing_mm: Tuple[float, float, float]) -> Dict[str, Dict[str, object]]:
+    voxel_volume_mm3 = float(np.prod(spacing_mm))
+    result: Dict[str, Dict[str, object]] = {}
+
+    for class_label, descriptor in BRATS_CLASS_DEFINITIONS.items():
+        mask = class_label_map == class_label
+        voxel_count = int(np.count_nonzero(mask))
+        volume_mm3 = float(voxel_count * voxel_volume_mm3)
+        volume_ml = float(volume_mm3 / 1000.0)
+
+        result[str(class_label)] = {
+            "label": int(class_label),
+            "key": str(descriptor["key"]),
+            "name": str(descriptor["name"]),
+            "detected": bool(voxel_count > 0),
+            "voxel_count": voxel_count,
+            "volume_mm3": volume_mm3,
+            "volume_ml": volume_ml,
+        }
+
+    return result

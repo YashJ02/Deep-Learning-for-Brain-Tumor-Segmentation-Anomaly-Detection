@@ -17,9 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from training.data import read_split_csv
 from training.inference import load_model_from_checkpoint
-from training.losses import bce_dice_loss
-from training.metrics import binary_dice_from_logits, binary_iou_from_logits
-from training.torch_dataset import BraTSBinaryTorchDataset
+from training.losses import bce_dice_loss, multiclass_ce_dice_loss
+from training.metrics import binary_dice_from_logits, binary_iou_from_logits, multiclass_dice_iou_from_logits
+from training.torch_dataset import BraTSTorchDataset
 from training.utils import ensure_dir, resolve_device, save_json, utc_timestamp
 
 
@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--task", type=str, choices=["auto", "binary", "multiclass"], default="auto")
+    parser.add_argument("--ce-weight", type=float, default=0.5)
     parser.add_argument("--modality", type=str, choices=["flair", "t1", "t1ce", "t2"], default=None)
     parser.add_argument("--target-shape", type=int, nargs=3, default=None)
     return parser.parse_args()
@@ -49,6 +51,18 @@ def _safe_std(values: List[float]) -> float:
     return float(pstdev(values)) if len(values) > 1 else 0.0
 
 
+def _resolve_task(requested: str, config: Dict[str, object]) -> str:
+    requested = (requested or "auto").strip().lower()
+    if requested in {"binary", "multiclass"}:
+        return requested
+
+    config_task = str(config.get("task", "")).strip().lower()
+    if config_task in {"binary", "multiclass"}:
+        return config_task
+
+    return "multiclass" if int(config.get("out_channels", 1)) > 1 else "binary"
+
+
 def main() -> int:
     args = parse_args()
     project_root = PROJECT_ROOT
@@ -59,6 +73,7 @@ def main() -> int:
 
     device = resolve_device(args.device)
     model, config = load_model_from_checkpoint(checkpoint_path, device=device)
+    task = _resolve_task(args.task, config)
 
     modality = args.modality or str(config.get("modality", "t1ce"))
     if args.target_shape is None:
@@ -67,33 +82,63 @@ def main() -> int:
         target_shape = tuple(args.target_shape)
 
     records = read_split_csv(csv_path)
-    dataset = BraTSBinaryTorchDataset(records=records, modality=modality, target_shape=target_shape, augment=False)
+    dataset = BraTSTorchDataset(
+        records=records,
+        modality=modality,
+        target_shape=target_shape,
+        augment=False,
+        task=task,
+    )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=device.type == "cuda")
 
     rows: List[Dict[str, float | str]] = []
     dice_scores: List[float] = []
     iou_scores: List[float] = []
     losses: List[float] = []
+    class_dice_scores: Dict[int, List[float]] = {}
+    class_iou_scores: Dict[int, List[float]] = {}
 
     model.eval()
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device, non_blocking=True)
-            masks = batch["mask"].to(device, non_blocking=True)
 
-            logits = model(images)
-            loss = float(bce_dice_loss(logits, masks).item())
-            dice = binary_dice_from_logits(logits, masks, threshold=args.threshold)
-            iou = binary_iou_from_logits(logits, masks, threshold=args.threshold)
+            if task == "binary":
+                masks = batch["mask"].to(device, non_blocking=True)
+                logits = model(images)
+                loss = float(bce_dice_loss(logits, masks).item())
+                dice = binary_dice_from_logits(logits, masks, threshold=args.threshold)
+                iou = binary_iou_from_logits(logits, masks, threshold=args.threshold)
+                pred_voxels = int((torch.sigmoid(logits) >= args.threshold).sum().item())
+                gt_voxels = int(masks.sum().item())
+                class_metrics: Dict[str, Dict[str, float]] = {}
+            else:
+                masks = batch["mask"].to(device, non_blocking=True).long()
+                logits = model(images)
+                loss = float(multiclass_ce_dice_loss(logits, masks, ce_weight=args.ce_weight).item())
+                dice, iou, per_class = multiclass_dice_iou_from_logits(logits, masks)
+
+                predictions = torch.argmax(logits, dim=1)
+                pred_voxels = int((predictions > 0).sum().item())
+                gt_voxels = int((masks > 0).sum().item())
+
+                class_metrics = {
+                    str(class_index): {
+                        "dice": float(metrics["dice"]),
+                        "iou": float(metrics["iou"]),
+                    }
+                    for class_index, metrics in per_class.items()
+                }
+
+                for class_index, metrics in per_class.items():
+                    class_dice_scores.setdefault(int(class_index), []).append(float(metrics["dice"]))
+                    class_iou_scores.setdefault(int(class_index), []).append(float(metrics["iou"]))
 
             case_ids = batch["case_id"]
             if isinstance(case_ids, list):
                 case_id = str(case_ids[0])
             else:
                 case_id = str(case_ids)
-
-            pred_voxels = int((torch.sigmoid(logits) >= args.threshold).sum().item())
-            gt_voxels = int(masks.sum().item())
 
             rows.append(
                 {
@@ -103,6 +148,7 @@ def main() -> int:
                     "iou": iou,
                     "pred_voxels": float(pred_voxels),
                     "gt_voxels": float(gt_voxels),
+                    "class_metrics": class_metrics,
                 }
             )
             losses.append(loss)
@@ -111,6 +157,7 @@ def main() -> int:
 
     summary = {
         "cases": len(rows),
+        "task": task,
         "mean_loss": _safe_mean(losses),
         "std_loss": _safe_std(losses),
         "mean_dice": _safe_mean(dice_scores),
@@ -119,12 +166,25 @@ def main() -> int:
         "std_iou": _safe_std(iou_scores),
     }
 
+    if task == "multiclass":
+        per_class_summary: Dict[str, Dict[str, float]] = {}
+        for class_index in sorted(class_dice_scores):
+            per_class_summary[str(class_index)] = {
+                "mean_dice": _safe_mean(class_dice_scores.get(class_index, [])),
+                "std_dice": _safe_std(class_dice_scores.get(class_index, [])),
+                "mean_iou": _safe_mean(class_iou_scores.get(class_index, [])),
+                "std_iou": _safe_std(class_iou_scores.get(class_index, [])),
+            }
+        summary["per_class"] = per_class_summary
+
     report = {
         "checkpoint": str(checkpoint_path),
         "device": str(device),
+        "task": task,
         "modality": modality,
         "target_shape": list(target_shape),
         "threshold": float(args.threshold),
+        "class_index_to_brats_label": {"0": 0, "1": 1, "2": 2, "3": 4},
         "summary": summary,
         "cases": rows,
     }

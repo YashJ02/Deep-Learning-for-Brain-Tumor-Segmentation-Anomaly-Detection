@@ -7,6 +7,7 @@ Applied defaults in templates:
 1. Partition: `gpu`
 2. Account directive: `#SBATCH --account=your_nurc_project`
 3. Module stack: `module load explorer anaconda3/2024.06 cuda/12.1.1`
+4. Training scripts in this folder run `--task multiclass` by default.
 
 Update `your_nurc_project` in each script to your allocation account.
 

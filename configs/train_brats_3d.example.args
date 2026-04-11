@@ -7,6 +7,8 @@
 --learning-rate 0.0003
 --weight-decay 0.00001
 --bce-weight 0.5
+--ce-weight 0.5
+--task multiclass
 --modality t1ce
 --target-shape 128 128 128
 --base-channels 16

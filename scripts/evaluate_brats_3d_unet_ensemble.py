@@ -17,7 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from training.inference import segment_with_checkpoint_ensemble
+from training.inference import load_model_from_checkpoint, segment_with_checkpoint_ensemble
+from training.torch_dataset import multiclass_indices_to_brats_labels, seg_to_multiclass_indices
 from training.utils import ensure_dir, resolve_device, save_json, utc_timestamp
 
 
@@ -73,6 +74,14 @@ def _safe_std(values: List[float]) -> float:
     return float(pstdev(values)) if len(values) > 1 else 0.0
 
 
+def _infer_task_from_checkpoint(checkpoint_path: Path, device: str) -> str:
+    _, config = load_model_from_checkpoint(checkpoint_path, device=device, use_cache=True)
+    config_task = str(config.get("task", "")).strip().lower()
+    if config_task in {"binary", "multiclass"}:
+        return config_task
+    return "multiclass" if int(config.get("out_channels", 1)) > 1 else "binary"
+
+
 def _dice_iou(pred: np.ndarray, target: np.ndarray, eps: float = 1e-6) -> tuple[float, float]:
     pred = pred.astype(bool)
     target = target.astype(bool)
@@ -96,10 +105,13 @@ def main() -> int:
 
     rows = _read_csv_rows(csv_path)
     checkpoints = _discover_checkpoints(args)
+    task = _infer_task_from_checkpoint(checkpoints[0], str(device))
 
     case_rows: List[Dict[str, float | str]] = []
     dice_scores: List[float] = []
     iou_scores: List[float] = []
+    class_dice_scores: Dict[int, List[float]] = {1: [], 2: [], 4: []}
+    class_iou_scores: Dict[int, List[float]] = {1: [], 2: [], 4: []}
 
     for row in rows:
         image_path = Path(row[args.modality])
@@ -111,8 +123,9 @@ def main() -> int:
 
         seg = nib.load(str(seg_path)).get_fdata(dtype=np.float32)
         target_mask = seg > 0
+        target_class_map = multiclass_indices_to_brats_labels(seg_to_multiclass_indices(seg))
 
-        pred_mask, _ = segment_with_checkpoint_ensemble(
+        pred_mask, details = segment_with_checkpoint_ensemble(
             volume=volume,
             checkpoint_paths=checkpoints,
             device=device,
@@ -124,12 +137,29 @@ def main() -> int:
         pred_voxels = int(pred_mask.sum())
         gt_voxels = int(target_mask.sum())
 
+        class_metrics: Dict[str, Dict[str, float]] = {}
+        if task == "multiclass":
+            predicted_class_map = details.get("_class_label_map")
+            if isinstance(predicted_class_map, np.ndarray):
+                for class_label in (1, 2, 4):
+                    class_dice, class_iou = _dice_iou(
+                        predicted_class_map == class_label,
+                        target_class_map == class_label,
+                    )
+                    class_dice_scores[class_label].append(class_dice)
+                    class_iou_scores[class_label].append(class_iou)
+                    class_metrics[str(class_label)] = {
+                        "dice": class_dice,
+                        "iou": class_iou,
+                    }
+
         case_row: Dict[str, float | str] = {
             "case_id": row["case_id"],
             "dice": dice,
             "iou": iou,
             "pred_voxels": float(pred_voxels),
             "gt_voxels": float(gt_voxels),
+            "class_metrics": class_metrics,
         }
         case_rows.append(case_row)
         dice_scores.append(dice)
@@ -137,16 +167,29 @@ def main() -> int:
 
     summary = {
         "cases": len(case_rows),
+        "task": task,
         "mean_dice": _safe_mean(dice_scores),
         "std_dice": _safe_std(dice_scores),
         "mean_iou": _safe_mean(iou_scores),
         "std_iou": _safe_std(iou_scores),
     }
 
+    if task == "multiclass":
+        summary["per_class"] = {
+            str(class_label): {
+                "mean_dice": _safe_mean(class_dice_scores[class_label]),
+                "std_dice": _safe_std(class_dice_scores[class_label]),
+                "mean_iou": _safe_mean(class_iou_scores[class_label]),
+                "std_iou": _safe_std(class_iou_scores[class_label]),
+            }
+            for class_label in (1, 2, 4)
+        }
+
     report = {
         "csv": str(csv_path),
         "checkpoints": [str(path) for path in checkpoints],
         "device": str(device),
+        "task": task,
         "modality": args.modality,
         "threshold": float(args.threshold),
         "summary": summary,
