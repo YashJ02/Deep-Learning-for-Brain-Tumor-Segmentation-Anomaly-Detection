@@ -1,4 +1,4 @@
-"""Download BraTS 2015 dataset via kagglehub with clear progress logs."""
+"""Download BraTS dataset via kagglehub with clear progress logs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 import kagglehub
 
 
-DATASET_ID = "andrewmvd/brain-tumor-segmentation-in-mri-brats-2015"
+DEFAULT_DATASET_ID = "andrewmvd/brain-tumor-segmentation-in-mri-brats-2015"
 
 
 def format_seconds(total_seconds: float) -> str:
@@ -47,7 +47,12 @@ def summarize_download(path: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Download BraTS 2015 dataset from Kaggle using kagglehub.")
+    parser = argparse.ArgumentParser(description="Download a BraTS dataset from Kaggle using kagglehub.")
+    parser.add_argument(
+        "--dataset-id",
+        default=DEFAULT_DATASET_ID,
+        help="Kaggle dataset id, e.g. awsaf49/brats20-dataset-training-validation.",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -60,8 +65,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    dataset_id = str(args.dataset_id).strip()
+    if not dataset_id:
+        print_step("Dataset id cannot be empty")
+        return 1
+
     print_step("Initializing KaggleHub downloader")
-    print_step(f"Dataset: {DATASET_ID}")
+    print_step(f"Dataset: {dataset_id}")
     if args.output_dir:
         print_step(f"Output directory: {Path(args.output_dir).resolve()}")
 
@@ -75,7 +85,7 @@ def main() -> int:
     try:
         print_step("Starting dataset download...")
         dataset_path = kagglehub.dataset_download(
-            DATASET_ID,
+            dataset_id,
             force_download=args.force,
             output_dir=args.output_dir,
         )

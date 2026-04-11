@@ -17,6 +17,14 @@ It includes:
 python scripts/run_training_pipeline.py --pipeline all --amp
 ```
 
+From a fresh machine (download + split + train + evaluate in one go):
+
+```bash
+python scripts/run_training_pipeline.py --download-data --download-dataset-id awsaf49/brats20-dataset-training-validation --pipeline deep --amp
+```
+
+This command downloads the dataset into `data/`, auto-detects the BraTS root, prepares splits, trains, and writes model checkpoints.
+
 This command can run:
 
 1. Train/val split generation.
@@ -243,6 +251,12 @@ PyTorch CUDA note:
 python scripts/run_training_pipeline.py --pipeline all --amp
 ```
 
+One-command from scratch (download first):
+
+```bash
+python scripts/run_training_pipeline.py --download-data --download-dataset-id awsaf49/brats20-dataset-training-validation --pipeline deep --amp
+```
+
 Useful options:
 
 1. `--pipeline deep`: run only deep-model flow.
@@ -251,6 +265,10 @@ Useful options:
 4. `--skip-deep-eval`: skip deep-model evaluation.
 5. `--skip-ensemble-eval`: skip ensemble evaluation.
 6. `--folds 0 1`: train selected folds only.
+7. `--download-data`: fetch data before running the rest of the pipeline.
+8. `--download-dataset-id <owner/dataset>`: choose which Kaggle dataset to pull.
+9. `--download-output-dir <path>`: where download output is stored (default `data/`).
+10. `--force-download`: force re-download even if cache/output already exists.
 
 ### B) Manual deep-model commands
 

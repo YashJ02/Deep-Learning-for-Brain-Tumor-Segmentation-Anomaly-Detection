@@ -26,6 +26,33 @@ def _resolve(path: Path) -> Path:
     return path if path.is_absolute() else (PROJECT_ROOT / path)
 
 
+def _has_seg_files(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    return any(path.rglob("*_seg.nii*"))
+
+
+def autodetect_data_root(search_root: Path) -> Path | None:
+    if not search_root.exists() or not search_root.is_dir():
+        return None
+
+    # First pass: look for directories that directly contain case folders.
+    candidates = [search_root, *sorted(path for path in search_root.iterdir() if path.is_dir())]
+    for candidate in candidates:
+        for child in sorted(path for path in candidate.iterdir() if path.is_dir()):
+            if any(child.glob("*_seg.nii*")):
+                return candidate
+
+    # Fallback: infer root from the first discovered segmentation file.
+    first_seg = next(search_root.rglob("*_seg.nii*"), None)
+    if first_seg is None:
+        return None
+    case_dir = first_seg.parent
+    if case_dir.parent.exists():
+        return case_dir.parent
+    return case_dir
+
+
 def run_command(command: list[str]) -> None:
     pretty = " ".join(shlex.quote(part) for part in command)
     log(f"Running: {pretty}")
@@ -56,6 +83,28 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data") / "MICCAI_BraTS2020_TrainingData",
         help="BraTS dataset root with case folders.",
+    )
+    parser.add_argument(
+        "--download-data",
+        action="store_true",
+        help="Download the dataset before split generation and training.",
+    )
+    parser.add_argument(
+        "--download-dataset-id",
+        type=str,
+        default="awsaf49/brats20-dataset-training-validation",
+        help="Kaggle dataset id used by download_brats_dataset.py.",
+    )
+    parser.add_argument(
+        "--download-output-dir",
+        type=Path,
+        default=Path("data"),
+        help="Output folder for dataset download when --download-data is enabled.",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Force re-download when --download-data is enabled.",
     )
     parser.add_argument(
         "--splits-dir",
@@ -130,16 +179,57 @@ def main() -> int:
     if not python_executable.exists():
         raise FileNotFoundError(f"Python executable not found: {python_executable}")
 
-    data_root = _resolve(args.data_root)
+    configured_data_root = _resolve(args.data_root)
+    download_output_dir = _resolve(args.download_output_dir)
+
+    if args.download_data:
+        download_output_dir.mkdir(parents=True, exist_ok=True)
+        download_command = [
+            str(python_executable),
+            str(SCRIPTS_DIR / "download_brats_dataset.py"),
+            "--dataset-id",
+            args.download_dataset_id,
+            "--output-dir",
+            str(download_output_dir),
+        ]
+        if args.force_download:
+            download_command.append("--force")
+        run_command(download_command)
+
+    data_root = configured_data_root
+    if not _has_seg_files(data_root):
+        detection_search_roots = [download_output_dir, configured_data_root.parent, PROJECT_ROOT / "data"]
+        deduped_search_roots: list[Path] = []
+        seen = set()
+        for root in detection_search_roots:
+            key = str(root.resolve()) if root.exists() else str(root)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_search_roots.append(root)
+
+        detected_root: Path | None = None
+        for search_root in deduped_search_roots:
+            detected_root = autodetect_data_root(search_root)
+            if detected_root is not None and _has_seg_files(detected_root):
+                break
+
+        if detected_root is not None and _has_seg_files(detected_root):
+            data_root = detected_root.resolve()
+            log(
+                "Configured --data-root does not contain complete BraTS files. "
+                f"Using auto-detected dataset root: {data_root}"
+            )
+
     splits_dir = _resolve(args.splits_dir)
     checkpoint_dir = _resolve(args.checkpoint_dir)
     kfold_checkpoint_root = _resolve(args.kfold_checkpoint_root)
     report_dir = _resolve(args.report_dir)
 
-    if not data_root.exists():
+    if not data_root.exists() or not _has_seg_files(data_root):
         raise FileNotFoundError(
-            "Data root not found. Expected BraTS cases under: "
-            f"{data_root}. Use --data-root to set the correct location."
+            "BraTS dataset root not found or incomplete. Expected case folders with all modalities and *_seg files under: "
+            f"{data_root}. Use --data-root or enable --download-data."
         )
 
     splits_dir.mkdir(parents=True, exist_ok=True)
