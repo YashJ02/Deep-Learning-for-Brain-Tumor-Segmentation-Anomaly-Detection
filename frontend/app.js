@@ -10,6 +10,9 @@ const foldRefreshBtn = document.getElementById("foldRefreshBtn");
 const runBtn = document.getElementById("runBtn");
 const statusEl = document.getElementById("status");
 const metricsGrid = document.getElementById("metricsGrid");
+const meshLayerControlsEl = document.getElementById("meshLayerControls");
+
+let latestRenderPayload = null;
 
 function setStatus(text, type = "") {
   statusEl.textContent = text;
@@ -211,6 +214,65 @@ function buildMeshTrace(mesh, { color, opacity, name, scale = 1 }) {
   };
 }
 
+function buildClassMeshToggleControls(classMeshes = []) {
+  if (!meshLayerControlsEl) {
+    return;
+  }
+
+  const usableClassMeshes = Array.isArray(classMeshes)
+    ? classMeshes.filter((entry) => Boolean(entry?.mesh?.vertices?.length))
+    : [];
+
+  if (!usableClassMeshes.length) {
+    meshLayerControlsEl.innerHTML =
+      '<div class="mesh-controls-empty">No class-specific meshes in this result.</div>';
+    return;
+  }
+
+  meshLayerControlsEl.innerHTML = usableClassMeshes
+    .map((entry) => {
+      const label = String(entry.label ?? "");
+      const color = String(entry.color || "#f59e0b");
+      const name = String(entry.name || `Class ${label || "?"}`);
+      return `
+        <label class="mesh-toggle">
+          <input type="checkbox" data-class-label="${label}" checked />
+          <span class="mesh-swatch" style="--swatch-color: ${color};"></span>
+          <span>${name}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function getVisibleClassMeshes(classMeshes = []) {
+  if (!meshLayerControlsEl || !Array.isArray(classMeshes) || classMeshes.length === 0) {
+    return classMeshes;
+  }
+
+  const selectedLabels = new Set(
+    Array.from(meshLayerControlsEl.querySelectorAll("input[data-class-label]:checked")).map((node) =>
+      String(node.dataset.classLabel),
+    ),
+  );
+
+  return classMeshes.filter((entry) => selectedLabels.has(String(entry.label)));
+}
+
+function renderLatestScene() {
+  if (!latestRenderPayload) {
+    return;
+  }
+
+  const visibleClassMeshes = getVisibleClassMeshes(latestRenderPayload.classMeshes || []);
+  renderMesh(
+    latestRenderPayload.tumorMesh,
+    latestRenderPayload.inputInfo,
+    latestRenderPayload.brainMesh,
+    visibleClassMeshes,
+  );
+}
+
 function renderMesh(tumorMesh, inputInfo, brainMesh = null, classMeshes = []) {
   const viewer = document.getElementById("viewer");
 
@@ -333,7 +395,15 @@ runBtn.addEventListener("click", async () => {
     }
 
     renderMetrics(payload.metrics, payload.inference, payload.class_metrics || {});
-    renderMesh(payload.mesh, payload.input, payload.brain_mesh, payload.class_meshes || []);
+
+    latestRenderPayload = {
+      tumorMesh: payload.mesh,
+      inputInfo: payload.input,
+      brainMesh: payload.brain_mesh,
+      classMeshes: payload.class_meshes || [],
+    };
+    buildClassMeshToggleControls(latestRenderPayload.classMeshes);
+    renderLatestScene();
 
     const ensembleSuffix = Number.isFinite(payload.inference.ensemble_size)
       ? ` | Ensemble size: ${payload.inference.ensemble_size}`
@@ -367,5 +437,13 @@ foldClearBtn.addEventListener("click", () => {
 foldRefreshBtn.addEventListener("click", async () => {
   await loadCheckpointInventory();
 });
+
+if (meshLayerControlsEl) {
+  meshLayerControlsEl.addEventListener("change", (event) => {
+    if (event.target && typeof event.target.matches === "function" && event.target.matches("input[data-class-label]")) {
+      renderLatestScene();
+    }
+  });
+}
 
 loadCheckpointInventory();
