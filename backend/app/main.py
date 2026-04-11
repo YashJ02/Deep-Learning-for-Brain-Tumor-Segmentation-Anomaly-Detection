@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .mesh import build_mesh_from_mask
 from .metrics import compute_tumor_metrics
-from .segmentation import load_nifti_volume, segment_tumor_baseline
+from .segmentation import load_nifti_volume, segment_tumor
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -40,10 +40,14 @@ def health() -> dict:
 async def segment(
     file: UploadFile = File(...),
     modality_index: int = Form(3),
+    engine: str = Form("auto"),
+    threshold: float = Form(0.5),
 ) -> dict:
     filename = file.filename or ""
     if not (filename.endswith(".nii") or filename.endswith(".nii.gz")):
         raise HTTPException(status_code=400, detail="Only .nii or .nii.gz files are supported.")
+    if not (0.0 < float(threshold) < 1.0):
+        raise HTTPException(status_code=400, detail="threshold must be in range (0, 1).")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / filename
@@ -52,9 +56,11 @@ async def segment(
 
         try:
             volume, spacing, used_modality = load_nifti_volume(str(tmp_path), modality_index)
-            mask = segment_tumor_baseline(volume)
+            mask, inference_info = segment_tumor(volume, engine=engine, threshold=threshold)
             metrics = compute_tumor_metrics(mask, spacing)
             mesh = build_mesh_from_mask(mask, spacing)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid request: {exc}") from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
 
@@ -65,7 +71,10 @@ async def segment(
             "volume_shape": [int(x) for x in volume.shape],
             "voxel_spacing_mm": [float(x) for x in spacing],
             "modality_index": int(used_modality),
+            "engine_requested": engine,
+            "threshold": float(threshold),
         },
+        "inference": inference_info,
         "metrics": metrics,
         "mesh": mesh,
     }

@@ -1,5 +1,7 @@
 const fileInput = document.getElementById("mriFile");
 const modalitySelect = document.getElementById("modalityIndex");
+const engineSelect = document.getElementById("engineMode");
+const thresholdInput = document.getElementById("maskThreshold");
 const runBtn = document.getElementById("runBtn");
 const statusEl = document.getElementById("status");
 const metricsGrid = document.getElementById("metricsGrid");
@@ -109,6 +111,8 @@ runBtn.addEventListener("click", async () => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("modality_index", modalitySelect.value);
+    formData.append("engine", engineSelect.value);
+    formData.append("threshold", thresholdInput.value);
 
     const response = await fetch("/api/segment", {
       method: "POST",
@@ -124,7 +128,7 @@ runBtn.addEventListener("click", async () => {
     renderMesh(payload.mesh, payload.input);
 
     setStatus(
-      `Done. Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count} | Modality index: ${payload.input.modality_index}`,
+      `Done. Engine: ${payload.inference.engine} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count} | Modality index: ${payload.input.modality_index}`,
       "good",
     );
   } catch (error) {

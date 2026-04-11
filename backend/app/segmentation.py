@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import nibabel as nib
 import numpy as np
 from scipy import ndimage as ndi
 from skimage.filters import threshold_otsu
-from skimage.morphology import ball, binary_closing, binary_opening, remove_small_holes, remove_small_objects
+from skimage.morphology import ball
+
+
+def _remove_small_components(mask: np.ndarray, min_size: int) -> np.ndarray:
+    labels, count = ndi.label(mask)
+    if count == 0:
+        return mask.astype(bool)
+
+    sizes = np.bincount(labels.ravel())
+    keep = sizes >= int(min_size)
+    keep[0] = False
+    return keep[labels].astype(bool)
 
 
 def load_nifti_volume(file_path: str, modality_index: Optional[int] = None) -> Tuple[np.ndarray, Tuple[float, float, float], int]:
@@ -48,10 +60,10 @@ def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
     threshold = max(otsu, high * 0.70)
 
     mask = smooth > threshold
-    mask = binary_opening(mask, footprint=ball(1))
-    mask = binary_closing(mask, footprint=ball(2))
-    mask = remove_small_objects(mask, min_size=300)
-    mask = remove_small_holes(mask, area_threshold=400)
+    mask = ndi.binary_opening(mask, structure=ball(1))
+    mask = ndi.binary_closing(mask, structure=ball(2))
+    mask = _remove_small_components(mask, min_size=300)
+    mask = ndi.binary_fill_holes(mask)
 
     if not np.any(mask):
         return mask.astype(bool)
@@ -65,3 +77,49 @@ def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
     largest_component = int(component_sizes.argmax())
 
     return (labels == largest_component).astype(bool)
+
+
+def default_checkpoint_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "models" / "checkpoints" / "best.pt"
+
+
+def segment_tumor(
+    volume: np.ndarray,
+    engine: str = "auto",
+    checkpoint_path: Optional[str] = None,
+    threshold: float = 0.5,
+) -> Tuple[np.ndarray, Dict[str, object]]:
+    engine = (engine or "auto").strip().lower()
+    if engine not in {"auto", "deep", "baseline"}:
+        raise ValueError("engine must be one of: auto, deep, baseline")
+
+    checkpoint = Path(checkpoint_path) if checkpoint_path else default_checkpoint_path()
+
+    if engine in {"auto", "deep"}:
+        if checkpoint.exists():
+            try:
+                from training.inference import segment_with_checkpoint
+
+                deep_mask, details = segment_with_checkpoint(
+                    volume=volume,
+                    checkpoint_path=checkpoint,
+                    threshold=threshold,
+                )
+                return deep_mask.astype(bool), {
+                    "engine": "deep",
+                    "checkpoint": str(checkpoint),
+                    **details,
+                }
+            except Exception as exc:
+                if engine == "deep":
+                    raise RuntimeError(f"Deep model inference failed: {exc}") from exc
+        elif engine == "deep":
+            raise FileNotFoundError(f"Deep-model checkpoint was not found: {checkpoint}")
+
+    baseline_mask = segment_tumor_baseline(volume)
+    return baseline_mask.astype(bool), {
+        "engine": "baseline",
+        "checkpoint": None,
+        "probability_mean": None,
+        "probability_max": None,
+    }

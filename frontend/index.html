@@ -35,6 +35,20 @@
             </select>
           </label>
 
+          <label class="field">
+            <span>Inference engine</span>
+            <select id="engineMode">
+              <option value="auto" selected>Auto (deep if checkpoint exists)</option>
+              <option value="deep">Deep model only</option>
+              <option value="baseline">Baseline only</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Mask threshold (deep mode)</span>
+            <input id="maskThreshold" type="number" min="0.05" max="0.95" step="0.05" value="0.50" />
+          </label>
+
           <button id="runBtn" class="action">Run 3D Segmentation</button>
           <p id="status" class="status">Waiting for input.</p>
         </aside>

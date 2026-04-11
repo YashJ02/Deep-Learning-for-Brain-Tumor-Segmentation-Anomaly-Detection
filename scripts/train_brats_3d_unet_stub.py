@@ -1,20 +1,20 @@
+"""Compatibility wrapper that points to the full training pipeline."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 
-def main() -> None:
+def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
-    data_root = project_root / "data" / "MICCAI_BraTS2020_TrainingData"
-    model_out = project_root / "models" / "brats_3d_unet.pt"
-
-    print("BraTS 3D training stub")
-    print(f"Expected dataset root: {data_root}")
-    print(f"Planned model output: {model_out}")
-    print("\nNext steps:")
-    print("1) Install MONAI + PyTorch with GPU support")
-    print("2) Build train/val patient split")
-    print("3) Add 3D UNet training loop")
-    print("4) Export inference-ready model and connect it in backend/app/segmentation.py")
+    print("The training stub has been replaced by the full CUDA pipeline.")
+    print("Run the following commands from project root:")
+    print("1) python scripts/prepare_brats_dataset.py --data-root data/MICCAI_BraTS2020_TrainingData")
+    print("2) python scripts/train_brats_3d_unet.py --train-csv data/splits/train.csv --val-csv data/splits/val.csv --amp")
+    print("3) python scripts/evaluate_brats_3d_unet.py --checkpoint models/checkpoints/best.pt")
+    print(f"Project root: {project_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

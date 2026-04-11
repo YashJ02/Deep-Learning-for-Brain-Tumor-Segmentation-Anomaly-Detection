@@ -1,0 +1,16 @@
+--train-csv data/splits/train.csv
+--val-csv data/splits/val.csv
+--checkpoint-dir models/checkpoints
+--epochs 120
+--batch-size 1
+--num-workers 8
+--learning-rate 0.0003
+--weight-decay 0.00001
+--bce-weight 0.5
+--modality t1ce
+--target-shape 128 128 128
+--base-channels 16
+--threshold 0.5
+--seed 42
+--device auto
+--amp

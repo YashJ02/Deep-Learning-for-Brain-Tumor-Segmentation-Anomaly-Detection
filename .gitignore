@@ -7,6 +7,9 @@ __pycache__/
 
 # Runtime artifacts
 *.log
+/logs/
+/reports/*
+!/reports/.gitkeep
 
 # Data and model payloads
 /data/*
