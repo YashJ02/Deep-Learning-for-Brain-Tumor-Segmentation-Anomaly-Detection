@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Dict
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,7 @@ from .segmentation import (
     available_fold_checkpoints,
     default_checkpoint_path,
     extract_brain_mask,
-    load_nifti_volume,
+    load_multimodal_nifti_volumes,
     resolve_ensemble_checkpoint_paths,
     segment_tumor,
 )
@@ -83,15 +84,37 @@ def checkpoint_inventory() -> dict:
 
 @app.post("/api/segment")
 async def segment(
-    file: UploadFile = File(...),
-    modality_index: int = Form(-1),
+    flair_file: UploadFile = File(...),
+    t1_file: UploadFile = File(...),
+    t1ce_file: UploadFile = File(...),
+    t2_file: UploadFile = File(...),
     engine: str = Form("all"),
     threshold: float = Form(0.5),
     ensemble_folds: str = Form(""),
 ) -> dict:
-    filename = file.filename or ""
-    if not (filename.endswith(".nii") or filename.endswith(".nii.gz")):
-        raise HTTPException(status_code=400, detail="Only .nii or .nii.gz files are supported.")
+    modality_uploads = {
+        "flair": flair_file,
+        "t1": t1_file,
+        "t1ce": t1ce_file,
+        "t2": t2_file,
+    }
+
+    def _validate_nii_filename(filename: str) -> bool:
+        return filename.endswith(".nii") or filename.endswith(".nii.gz")
+
+    upload_mode = "brats-four-file"
+    source_files: Dict[str, str] = {}
+
+    for name, upload in modality_uploads.items():
+        filename = (upload.filename or "").strip()
+        if not _validate_nii_filename(filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only .nii or .nii.gz files are supported. Invalid file for {name}: {filename}",
+            )
+        source_files[name] = filename
+
+    filename = "multimodal_bundle"
     if not (0.0 < float(threshold) < 1.0):
         raise HTTPException(status_code=400, detail="threshold must be in range (0, 1).")
     try:
@@ -100,12 +123,25 @@ async def segment(
         raise HTTPException(status_code=400, detail=f"Invalid ensemble_folds value: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / filename
-        with tmp_path.open("wb") as handle:
-            shutil.copyfileobj(file.file, handle)
+        uploaded_paths = {}
+        for modality_name, upload in modality_uploads.items():
+            target_name = f"{modality_name}_{source_files[modality_name]}"
+            modality_path = Path(tmp_dir) / target_name
+            with modality_path.open("wb") as handle:
+                shutil.copyfileobj(upload.file, handle)
+            uploaded_paths[modality_name] = str(modality_path)
 
         try:
-            volume, spacing, used_modality = load_nifti_volume(str(tmp_path), modality_index)
+            volume, spacing = load_multimodal_nifti_volumes(
+                {
+                    "flair": uploaded_paths["flair"],
+                    "t1": uploaded_paths["t1"],
+                    "t1ce": uploaded_paths["t1ce"],
+                    "t2": uploaded_paths["t2"],
+                }
+            )
+            used_modality = -1
+
             selected_checkpoints = (
                 resolve_ensemble_checkpoint_paths(requested_fold_indices)
                 if requested_fold_indices is not None
@@ -117,7 +153,7 @@ async def segment(
                 threshold=threshold,
                 ensemble_checkpoint_paths=selected_checkpoints,
             )
-            inference_info["input_mode"] = "multimodal" if int(used_modality) == -1 else "single-modality"
+            inference_info["input_mode"] = "multimodal"
             metrics = compute_tumor_metrics(mask, spacing)
             mesh = build_mesh_from_mask(mask, spacing, target_max_dim=140)
             brain_mask = extract_brain_mask(volume)
@@ -156,10 +192,12 @@ async def segment(
         "status": "ok",
         "input": {
             "filename": filename,
+            "source_files": source_files,
+            "upload_mode": upload_mode,
             "volume_shape": [int(x) for x in volume.shape],
             "voxel_spacing_mm": [float(x) for x in spacing],
             "modality_index": int(used_modality),
-            "modality_mode": "all" if int(used_modality) == -1 else "single",
+            "modality_mode": "all",
             "engine_requested": engine,
             "threshold": float(threshold),
             "ensemble_folds_requested": requested_fold_indices,

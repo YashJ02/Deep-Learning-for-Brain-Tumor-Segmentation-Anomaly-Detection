@@ -2,13 +2,12 @@
   const { useEffect, useMemo, useRef, useState } = React;
   const html = htm.bind(React.createElement);
 
-  const MODALITY_OPTIONS = [
-    { value: "-1", label: "All - Multimodal Fusion" },
-    { value: "0", label: "0 - T1" },
-    { value: "1", label: "1 - T1ce" },
-    { value: "2", label: "2 - T2" },
-    { value: "3", label: "3 - FLAIR" },
-  ];
+  const MULTIMODAL_FILE_LABELS = {
+    flair: "FLAIR",
+    t1: "T1",
+    t1ce: "T1ce",
+    t2: "T2",
+  };
 
   const ENGINE_OPTIONS = [
     { value: "all", label: "All engines (ensemble > deep > baseline)" },
@@ -755,8 +754,12 @@
     const viewerRef = useRef(null);
     const viewerAnimationRef = useRef(null);
     const consumedBuildTokenRef = useRef(0);
-    const [file, setFile] = useState(null);
-    const [modalityIndex, setModalityIndex] = useState("-1");
+    const [multimodalFiles, setMultimodalFiles] = useState({
+      flair: null,
+      t1: null,
+      t1ce: null,
+      t2: null,
+    });
     const [engineMode, setEngineMode] = useState("all");
     const [threshold, setThreshold] = useState("0.50");
 
@@ -856,14 +859,14 @@
           key: "Input",
           value: result && result.inference && result.inference.input_mode
             ? result.inference.input_mode
-            : (modalityIndex === "-1" ? "multimodal" : "single-modality"),
+            : "multimodal",
         },
         {
           key: "Class Meshes",
           value: result && Array.isArray(result.class_meshes) ? String(result.class_meshes.length) : "0",
         },
       ],
-      [result, modalityIndex],
+      [result],
     );
 
     useEffect(() => {
@@ -1051,9 +1054,13 @@
     }
 
     async function runSegmentation() {
-      if (!file) {
+      const missingModalities = Object.entries(multimodalFiles)
+        .filter(([, selectedFile]) => !selectedFile)
+        .map(([name]) => MULTIMODAL_FILE_LABELS[name] || name.toUpperCase());
+
+      if (missingModalities.length > 0) {
         setStatus({
-          text: "Please choose a .nii or .nii.gz file first.",
+          text: `Please provide all four modality files. Missing: ${missingModalities.join(", ")}.`,
           type: "bad",
         });
         return;
@@ -1072,8 +1079,12 @@
 
       try {
         const formData = new FormData();
-        formData.append("file", file);
-        formData.append("modality_index", modalityIndex);
+
+        formData.append("flair_file", multimodalFiles.flair);
+        formData.append("t1_file", multimodalFiles.t1);
+        formData.append("t1ce_file", multimodalFiles.t1ce);
+        formData.append("t2_file", multimodalFiles.t2);
+
         formData.append("engine", engineMode);
         formData.append("threshold", threshold);
 
@@ -1108,7 +1119,7 @@
           : "";
 
         setStatus({
-          text: `Done. Engine: ${payload.inference.engine}${ensembleSuffix}${taskSuffix}${inputSuffix}${classSuffix} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count} | Modality index: ${payload.input.modality_index}`,
+          text: `Done. Engine: ${payload.inference.engine}${ensembleSuffix}${taskSuffix}${inputSuffix}${classSuffix} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count}`,
           type: "good",
         });
 
@@ -1158,35 +1169,35 @@
           <aside className="panel controls-panel reveal">
             <h2>Inference Console</h2>
 
-            <label className="field">
-              <span className="field-label">MRI volume file</span>
-              <input
-                className="input"
-                type="file"
-                accept=".nii,.gz,.nii.gz"
-                onChange=${(event) => {
-                  const picked = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-                  setFile(picked);
-                }}
-              />
-            </label>
+            <div className="field">
+              <span className="field-label">BraTS modality files (required)</span>
 
-            <div className="file-pill">${file ? file.name : "No file selected"}</div>
+              ${Object.keys(MULTIMODAL_FILE_LABELS).map((key) =>
+                html`
+                  <label className="field" key=${key}>
+                    <span className="field-label">${MULTIMODAL_FILE_LABELS[key]} file</span>
+                    <input
+                      className="input"
+                      type="file"
+                      accept=".nii,.gz,.nii.gz"
+                      onChange=${(event) => {
+                        const picked = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+                        setMultimodalFiles((prev) => ({
+                          ...prev,
+                          [key]: picked,
+                        }));
+                      }}
+                    />
+                  </label>
+                `,
+              )}
 
-            <label className="field">
-              <span className="field-label">Input mode / modality</span>
-              <select
-                className="select"
-                value=${modalityIndex}
-                onChange=${(event) => setModalityIndex(event.target.value)}
-              >
-                ${MODALITY_OPTIONS.map(
-                  (option) => html`
-                    <option key=${option.value} value=${option.value}>${option.label}</option>
-                  `,
-                )}
-              </select>
-            </label>
+              <div className="file-pill">
+                ${Object.entries(MULTIMODAL_FILE_LABELS)
+                  .map(([key, label]) => `${label}: ${multimodalFiles[key] ? multimodalFiles[key].name : "missing"}`)
+                  .join(" | ")}
+              </div>
+            </div>
 
             <label className="field">
               <span className="field-label">Inference engine</span>
