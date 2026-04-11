@@ -3,86 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NeuroScope 3D - BraTS Segmentation</title>
+    <title>NeuroScope 3D React Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js"></script>
   </head>
   <body>
-    <main class="page">
-      <section class="hero">
-        <p class="eyebrow">BraTS 3D Pipeline Starter</p>
-        <h1>NeuroScope 3D Tumor Mapping</h1>
-        <p class="subtitle">
-          Upload a .nii or .nii.gz MRI volume, generate tumor segmentation, and inspect a rotatable 3D mask with size metrics.
-        </p>
-      </section>
-
-      <section class="grid">
-        <aside class="panel controls">
-          <h2>Input</h2>
-          <label class="field">
-            <span>MRI volume file</span>
-            <input id="mriFile" type="file" accept=".nii,.gz,.nii.gz" />
-          </label>
-
-          <label class="field">
-            <span>Modality index (for 4D volumes)</span>
-            <select id="modalityIndex">
-              <option value="0">0 - T1</option>
-              <option value="1">1 - T1ce</option>
-              <option value="2">2 - T2</option>
-              <option value="3" selected>3 - FLAIR</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Inference engine</span>
-            <select id="engineMode">
-              <option value="auto" selected>Auto (ensemble > deep > baseline)</option>
-              <option value="deep">Deep model only</option>
-              <option value="ensemble">Ensemble (k-fold checkpoints)</option>
-              <option value="baseline">Baseline only</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Mask threshold (deep mode)</span>
-            <input id="maskThreshold" type="number" min="0.05" max="0.95" step="0.05" value="0.50" />
-          </label>
-
-          <label class="field">
-            <span>Fold Checkpoint Selector (ensemble)</span>
-            <div class="fold-actions">
-              <button id="foldSelectAllBtn" class="mini-action" type="button">Select all</button>
-              <button id="foldClearBtn" class="mini-action" type="button">Clear all</button>
-              <button id="foldRefreshBtn" class="mini-action" type="button">Refresh inventory</button>
-            </div>
-            <div id="foldSelector" class="fold-selector"></div>
-            <p id="foldSelectorInfo" class="field-note">Loading checkpoint inventory...</p>
-          </label>
-
-          <button id="runBtn" class="action">Run 3D Segmentation</button>
-          <p id="status" class="status">Waiting for input.</p>
-        </aside>
-
-        <section class="panel viewer-wrap">
-          <h2>3D Brain + Tumor/Class Mesh</h2>
-          <div id="viewer" class="viewer"></div>
-          <div class="mesh-controls-wrap">
-            <p class="mesh-controls-title">Class Mesh Visibility</p>
-            <div id="meshLayerControls" class="mesh-controls">
-              <div class="mesh-controls-empty">Run multiclass segmentation to enable class mesh toggles.</div>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <section class="panel metrics">
-        <h2>Tumor Metrics</h2>
-        <div id="metricsGrid" class="metrics-grid"></div>
-      </section>
-    </main>
-
+    <div class="ambient-layer" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="orb orb-c"></div>
+      <div class="noise-grid"></div>
+    </div>
+    <div id="root"></div>
     <script src="app.js"></script>
   </body>
 </html>

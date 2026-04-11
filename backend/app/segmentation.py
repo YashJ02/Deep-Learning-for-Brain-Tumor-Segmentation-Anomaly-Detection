@@ -21,6 +21,14 @@ def _remove_small_components(mask: np.ndarray, min_size: int) -> np.ndarray:
     return keep[labels].astype(bool)
 
 
+def _percentile_normalize(volume: np.ndarray) -> np.ndarray:
+    volume = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    p1, p99 = np.percentile(volume, [1, 99])
+    if p99 <= p1:
+        return np.zeros_like(volume, dtype=np.float32)
+    return np.clip((volume - p1) / (p99 - p1), 0.0, 1.0).astype(np.float32)
+
+
 def load_nifti_volume(file_path: str, modality_index: Optional[int] = None) -> Tuple[np.ndarray, Tuple[float, float, float], int]:
     image = nib.load(file_path)
     data = image.get_fdata(dtype=np.float32)
@@ -29,8 +37,17 @@ def load_nifti_volume(file_path: str, modality_index: Optional[int] = None) -> T
     if data.ndim == 4:
         channel_count = data.shape[3]
         if modality_index is None:
-            modality_index = min(3, channel_count - 1)
-        modality_index = int(np.clip(modality_index, 0, channel_count - 1))
+            modality_index = -1
+
+        requested_index = int(modality_index)
+        if requested_index == -1:
+            normalized_channels = [_percentile_normalize(data[..., channel]) for channel in range(channel_count)]
+            stacked = np.stack(normalized_channels, axis=0)
+            volume = np.mean(stacked, axis=0).astype(np.float32)
+            modality_index = -1
+            return volume, spacing, modality_index
+
+        modality_index = int(np.clip(requested_index, 0, channel_count - 1))
         volume = data[..., modality_index]
     elif data.ndim == 3:
         modality_index = 0
@@ -38,14 +55,8 @@ def load_nifti_volume(file_path: str, modality_index: Optional[int] = None) -> T
     else:
         raise ValueError(f"Unsupported NIfTI shape: {data.shape}")
 
-    volume = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0)
-    p1, p99 = np.percentile(volume, [1, 99])
-    if p99 <= p1:
-        normalized = np.zeros_like(volume, dtype=np.float32)
-    else:
-        normalized = np.clip((volume - p1) / (p99 - p1), 0.0, 1.0).astype(np.float32)
-
-    return normalized, spacing, modality_index
+    normalized = _percentile_normalize(volume)
+    return normalized, spacing, int(modality_index)
 
 
 def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
@@ -165,8 +176,10 @@ def segment_tumor(
     threshold: float = 0.5,
 ) -> Tuple[np.ndarray, Dict[str, object], Optional[np.ndarray]]:
     engine = (engine or "auto").strip().lower()
+    if engine == "all":
+        engine = "auto"
     if engine not in {"auto", "deep", "ensemble", "baseline"}:
-        raise ValueError("engine must be one of: auto, deep, ensemble, baseline")
+        raise ValueError("engine must be one of: all, auto, deep, ensemble, baseline")
 
     checkpoint = Path(checkpoint_path) if checkpoint_path else default_checkpoint_path()
     ensemble_paths = list(ensemble_checkpoint_paths) if ensemble_checkpoint_paths is not None else default_ensemble_checkpoint_paths()

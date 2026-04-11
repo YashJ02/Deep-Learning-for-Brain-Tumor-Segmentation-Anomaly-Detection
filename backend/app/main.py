@@ -84,8 +84,8 @@ def checkpoint_inventory() -> dict:
 @app.post("/api/segment")
 async def segment(
     file: UploadFile = File(...),
-    modality_index: int = Form(3),
-    engine: str = Form("auto"),
+    modality_index: int = Form(-1),
+    engine: str = Form("all"),
     threshold: float = Form(0.5),
     ensemble_folds: str = Form(""),
 ) -> dict:
@@ -117,10 +117,11 @@ async def segment(
                 threshold=threshold,
                 ensemble_checkpoint_paths=selected_checkpoints,
             )
+            inference_info["input_mode"] = "multimodal" if int(used_modality) == -1 else "single-modality"
             metrics = compute_tumor_metrics(mask, spacing)
-            mesh = build_mesh_from_mask(mask, spacing)
+            mesh = build_mesh_from_mask(mask, spacing, target_max_dim=140)
             brain_mask = extract_brain_mask(volume)
-            brain_mesh = build_mesh_from_mask(brain_mask, spacing, target_max_dim=72)
+            brain_mesh = build_mesh_from_mask(brain_mask, spacing, target_max_dim=156)
 
             class_metrics: dict = {}
             class_meshes: list[dict] = []
@@ -134,7 +135,7 @@ async def segment(
                 for class_label, descriptor in BRATS_CLASS_DEFINITIONS.items():
                     label_key = str(class_label)
                     class_mask = class_label_map == int(class_label)
-                    class_mesh = build_mesh_from_mask(class_mask, spacing, target_max_dim=80)
+                    class_mesh = build_mesh_from_mask(class_mask, spacing, target_max_dim=132)
                     class_meshes.append(
                         {
                             "label": int(class_label),
@@ -158,6 +159,7 @@ async def segment(
             "volume_shape": [int(x) for x in volume.shape],
             "voxel_spacing_mm": [float(x) for x in spacing],
             "modality_index": int(used_modality),
+            "modality_mode": "all" if int(used_modality) == -1 else "single",
             "engine_requested": engine,
             "threshold": float(threshold),
             "ensemble_folds_requested": requested_fold_indices,
