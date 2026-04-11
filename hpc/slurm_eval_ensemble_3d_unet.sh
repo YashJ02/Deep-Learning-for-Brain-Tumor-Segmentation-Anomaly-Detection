@@ -25,6 +25,5 @@ source .venv/bin/activate
 python scripts/evaluate_brats_3d_unet_ensemble.py \
   --csv data/splits/val.csv \
   --checkpoint-glob "models/kfold/fold_*/best.pt" \
-  --modality t1ce \
   --threshold 0.5 \
   --device auto

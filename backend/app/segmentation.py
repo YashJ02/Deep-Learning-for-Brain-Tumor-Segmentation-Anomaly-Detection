@@ -10,7 +10,7 @@ from skimage.filters import threshold_otsu
 from skimage.morphology import ball
 
 
-_CHECKPOINT_TASK_CACHE: Dict[str, str] = {}
+_CHECKPOINT_META_CACHE: Dict[str, Dict[str, object]] = {}
 
 
 def _remove_small_components(mask: np.ndarray, min_size: int) -> np.ndarray:
@@ -30,6 +30,14 @@ def _percentile_normalize(volume: np.ndarray) -> np.ndarray:
     if p99 <= p1:
         return np.zeros_like(volume, dtype=np.float32)
     return np.clip((volume - p1) / (p99 - p1), 0.0, 1.0).astype(np.float32)
+
+
+def _reference_volume(volume: np.ndarray) -> np.ndarray:
+    if volume.ndim == 4:
+        return np.mean(volume, axis=0).astype(np.float32)
+    if volume.ndim == 3:
+        return volume.astype(np.float32)
+    raise ValueError(f"Unsupported volume shape for baseline operations: {volume.shape}")
 
 
 def load_multimodal_nifti_volumes(modality_paths: Dict[str, str]) -> Tuple[np.ndarray, Tuple[float, float, float]]:
@@ -62,13 +70,12 @@ def load_multimodal_nifti_volumes(modality_paths: Dict[str, str]) -> Tuple[np.nd
 
         normalized_channels.append(_percentile_normalize(data))
 
-    stacked = np.stack(normalized_channels, axis=0)
-    fused = np.mean(stacked, axis=0).astype(np.float32)
-    return fused, tuple(first_spacing if first_spacing is not None else (1.0, 1.0, 1.0))
+    stacked = np.stack(normalized_channels, axis=0).astype(np.float32)
+    return stacked, tuple(first_spacing if first_spacing is not None else (1.0, 1.0, 1.0))
 
 
 def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
-    smooth = ndi.gaussian_filter(volume, sigma=1.0)
+    smooth = ndi.gaussian_filter(_reference_volume(volume), sigma=1.0)
     non_zero = smooth[smooth > 0]
 
     if non_zero.size == 0:
@@ -99,7 +106,7 @@ def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
 
 
 def extract_brain_mask(volume: np.ndarray) -> np.ndarray:
-    smooth = ndi.gaussian_filter(volume, sigma=0.8)
+    smooth = ndi.gaussian_filter(_reference_volume(volume), sigma=0.8)
     non_zero = smooth[smooth > 0]
 
     if non_zero.size == 0:
@@ -156,42 +163,63 @@ def _candidate_deep_checkpoints(explicit_checkpoint_path: Optional[str]) -> List
     return deduped
 
 
-def _checkpoint_task(checkpoint_path: Path) -> str:
+def _checkpoint_meta(checkpoint_path: Path) -> Dict[str, object]:
     checkpoint = checkpoint_path.resolve()
     key = str(checkpoint)
-    if key in _CHECKPOINT_TASK_CACHE:
-        return _CHECKPOINT_TASK_CACHE[key]
+    if key in _CHECKPOINT_META_CACHE:
+        return _CHECKPOINT_META_CACHE[key]
 
     if not checkpoint.exists():
-        _CHECKPOINT_TASK_CACHE[key] = "missing"
-        return "missing"
+        meta = {"task": "missing", "in_channels": None, "out_channels": None}
+        _CHECKPOINT_META_CACHE[key] = meta
+        return meta
 
     task = "unknown"
+    in_channels: int | None = None
+    out_channels: int | None = None
     try:
         import torch
 
         payload = torch.load(str(checkpoint), map_location="cpu")
         config = payload.get("config", {}) if isinstance(payload, dict) else {}
+        in_channels = int(config.get("in_channels", 1))
+        out_channels = int(config.get("out_channels", 1))
         config_task = str(config.get("task", "")).strip().lower()
         if config_task in {"binary", "multiclass"}:
             task = config_task
         else:
-            out_channels = int(config.get("out_channels", 1))
-            task = "multiclass" if out_channels > 1 else "binary"
+            task = "multiclass" if int(out_channels) > 1 else "binary"
     except Exception:
         task = "unknown"
 
-    _CHECKPOINT_TASK_CACHE[key] = task
-    return task
+    meta = {
+        "task": task,
+        "in_channels": in_channels,
+        "out_channels": out_channels,
+    }
+    _CHECKPOINT_META_CACHE[key] = meta
+    return meta
+
+
+def _checkpoint_task(checkpoint_path: Path) -> str:
+    return str(_checkpoint_meta(checkpoint_path).get("task", "unknown"))
+
+
+def _checkpoint_is_multimodal_multiclass(checkpoint_path: Path) -> bool:
+    meta = _checkpoint_meta(checkpoint_path)
+    task = str(meta.get("task", "unknown"))
+    in_channels = meta.get("in_channels")
+    out_channels = meta.get("out_channels")
+    return bool(task == "multiclass" and in_channels == 4 and out_channels in {3, 4})
 
 
 def _multiclass_only(paths: Sequence[Path]) -> List[Path]:
-    return [path for path in paths if path.exists() and _checkpoint_task(path) == "multiclass"]
+    return [path for path in paths if path.exists() and _checkpoint_is_multimodal_multiclass(path)]
 
 
 def _preferred_multiclass_checkpoint(explicit_checkpoint_path: Optional[str]) -> Optional[Path]:
     for candidate in _candidate_deep_checkpoints(explicit_checkpoint_path):
-        if candidate.exists() and _checkpoint_task(candidate) == "multiclass":
+        if candidate.exists() and _checkpoint_is_multimodal_multiclass(candidate):
             return candidate
     return None
 
@@ -209,11 +237,15 @@ def _extract_fold_index(path: Path) -> Optional[int]:
 def available_fold_checkpoints() -> List[Dict[str, object]]:
     items: List[Dict[str, object]] = []
     for checkpoint in default_ensemble_checkpoint_paths():
+        meta = _checkpoint_meta(checkpoint)
         items.append(
             {
                 "fold_index": _extract_fold_index(checkpoint),
                 "path": str(checkpoint),
-                "task": _checkpoint_task(checkpoint),
+                "task": meta.get("task", "unknown"),
+                "in_channels": meta.get("in_channels"),
+                "out_channels": meta.get("out_channels"),
+                "compatible": _checkpoint_is_multimodal_multiclass(checkpoint),
             }
         )
     return items
@@ -239,6 +271,13 @@ def resolve_ensemble_checkpoint_paths(fold_indices: Sequence[int]) -> List[Path]
     if missing:
         raise FileNotFoundError(f"Missing fold checkpoints for indices: {missing}")
 
+    incompatible = [str(path) for path in selected if not _checkpoint_is_multimodal_multiclass(path)]
+    if incompatible:
+        raise RuntimeError(
+            "Selected folds include checkpoints that are not multimodal multiclass compatible: "
+            f"{incompatible}"
+        )
+
     return selected
 
 
@@ -255,9 +294,10 @@ def segment_tumor(
 
     checkpoint = Path(checkpoint_path).resolve() if checkpoint_path else default_checkpoint_path().resolve()
     ensemble_paths = list(ensemble_checkpoint_paths) if ensemble_checkpoint_paths is not None else default_ensemble_checkpoint_paths()
+    compatible_ensemble_paths = _multiclass_only(ensemble_paths)
 
     if engine == "all":
-        multiclass_ensemble_paths = _multiclass_only(ensemble_paths)
+        multiclass_ensemble_paths = compatible_ensemble_paths
         preferred_multiclass_checkpoint = _preferred_multiclass_checkpoint(checkpoint_path)
 
         if multiclass_ensemble_paths:
@@ -308,13 +348,13 @@ def segment_tumor(
         )
 
     if engine in {"auto", "ensemble"}:
-        if len(ensemble_paths) >= 1:
+        if len(compatible_ensemble_paths) >= 1:
             try:
                 from training.inference import segment_with_checkpoint_ensemble
 
                 ensemble_mask, details = segment_with_checkpoint_ensemble(
                     volume=volume,
-                    checkpoint_paths=ensemble_paths,
+                    checkpoint_paths=compatible_ensemble_paths,
                     threshold=threshold,
                 )
                 class_label_map = details.pop("_class_label_map", None)
@@ -323,7 +363,7 @@ def segment_tumor(
                     "checkpoint": None,
                     "fold_indices": [
                         fold_index
-                        for fold_index in (_extract_fold_index(path) for path in ensemble_paths)
+                        for fold_index in (_extract_fold_index(path) for path in compatible_ensemble_paths)
                         if fold_index is not None
                     ],
                     **{key: value for key, value in details.items() if not key.startswith("_")},
@@ -333,7 +373,8 @@ def segment_tumor(
                     raise RuntimeError(f"Ensemble inference failed: {exc}") from exc
         elif engine == "ensemble":
             raise FileNotFoundError(
-                "No ensemble checkpoints available. Expected files under models/kfold/fold_*/best.pt"
+                "No compatible multimodal multiclass ensemble checkpoints available. "
+                "Expected files under models/kfold/fold_*/best.pt with in_channels=4 and multiclass outputs."
             )
 
     if engine in {"auto", "deep"}:
@@ -362,7 +403,7 @@ def segment_tumor(
     baseline_mask = segment_tumor_baseline(volume)
     return baseline_mask.astype(bool), {
         "engine": "baseline",
-        "task": "binary",
+        "task": "multiclass",
         "checkpoint": None,
         "fold_indices": [],
         "probability_mean": None,

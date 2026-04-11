@@ -4,7 +4,7 @@ NeuroScope 3D is a full MRI tumor segmentation project built for BraTS-style NIf
 It includes:
 
 1. FastAPI backend + browser UI for interactive 3D visualization.
-2. Baseline and deep-learning segmentation engines (binary + multiclass).
+2. Baseline and deep-learning segmentation engines (multimodal multiclass).
 3. Deep-model and 5-fold training workflows.
 4. Ensemble evaluation and prediction utilities.
 5. HPC Slurm templates (Northeastern Explorer defaults).
@@ -14,7 +14,7 @@ It includes:
 ### 1) Run full training pipeline from one script
 
 ```bash
-python scripts/run_training_pipeline.py --pipeline all --task multiclass --amp
+python scripts/run_training_pipeline.py --pipeline all --amp
 ```
 
 This command can run:
@@ -55,12 +55,10 @@ BraTS segmentation labels are typically encoded as:
 3. `2`: peritumoral edema.
 4. `4`: enhancing tumor.
 
-This project supports two training targets:
+This project enforces one training target and input mode:
 
-1. `binary`: converts labels to `seg > 0` (`tumor` vs `non-tumor`).
-2. `multiclass`: predicts BraTS regions separately (`0/1/2/4`, mapped internally to class indices `0/1/2/3`).
-
-Default training mode in launchers is `multiclass`.
+1. Multimodal input: all four MRI modalities are used together as 4 channels (`flair`, `t1`, `t1ce`, `t2`).
+2. Multiclass output: predicts BraTS regions (`0/1/2/4`, mapped internally to class indices `0/1/2/3`).
 
 ## Expected Dataset Layout
 
@@ -162,9 +160,9 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 ### training/
 
 1. `training/model.py`: 3D U-Net architecture and parameter counting helper.
-2. `training/torch_dataset.py`: BraTS PyTorch dataset loader, normalization, resize, augmentation.
-3. `training/losses.py`: binary BCE+Dice and multiclass CE+Dice losses.
-4. `training/metrics.py`: binary and multiclass Dice/IoU metrics from logits.
+2. `training/torch_dataset.py`: multimodal BraTS PyTorch dataset loader, normalization, resize, augmentation.
+3. `training/losses.py`: multiclass CE+Dice losses.
+4. `training/metrics.py`: multiclass Dice/IoU metrics from logits.
 5. `training/inference.py`: checkpoint loading, deep-model and ensemble inference.
 6. `training/data.py`: case discovery, CSV read/write, random split, k-fold split.
 7. `training/utils.py`: seed, directory, JSON, timestamp, device helpers.
@@ -175,12 +173,12 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 1. `scripts/download_brats_dataset.py`: download dataset bundle via kagglehub.
 2. `scripts/prepare_brats_dataset.py`: generate all.csv, train.csv, val.csv.
 3. `scripts/prepare_brats_kfold_dataset.py`: generate deterministic fold CSVs.
-4. `scripts/train_brats_3d_unet.py`: train one 3D U-Net checkpoint (`--task binary|multiclass`).
+4. `scripts/train_brats_3d_unet.py`: train one multimodal multiclass 3D U-Net checkpoint.
 5. `scripts/train_brats_3d_unet_kfold.py`: local launcher to train multiple folds.
-6. `scripts/evaluate_brats_3d_unet.py`: evaluate one checkpoint on a CSV split (auto task detection).
-7. `scripts/evaluate_brats_3d_unet_ensemble.py`: evaluate fold ensemble on a CSV split (supports multiclass).
-8. `scripts/predict_brats_3d_unet.py`: infer one volume with one checkpoint (supports multiclass labels).
-9. `scripts/predict_brats_3d_unet_ensemble.py`: infer one volume with multiple fold checkpoints.
+6. `scripts/evaluate_brats_3d_unet.py`: evaluate one multimodal multiclass checkpoint on a CSV split.
+7. `scripts/evaluate_brats_3d_unet_ensemble.py`: evaluate multimodal multiclass fold ensemble on a CSV split.
+8. `scripts/predict_brats_3d_unet.py`: infer one case from four modality files with one checkpoint.
+9. `scripts/predict_brats_3d_unet_ensemble.py`: infer one case from four modality files with multiple fold checkpoints.
 10. `scripts/train_brats_3d_unet_stub.py`: compatibility helper that prints migration commands.
 11. `scripts/run_training_pipeline.py`: one-command orchestrator for deep/kfold/all training flows.
 12. `scripts/run_showcase.py`: one-command showcase launcher for backend + browser.
@@ -221,33 +219,32 @@ PyTorch CUDA note:
 ### A) Full pipeline in one command
 
 ```bash
-python scripts/run_training_pipeline.py --pipeline all --task multiclass --amp
+python scripts/run_training_pipeline.py --pipeline all --amp
 ```
 
 Useful options:
 
 1. `--pipeline deep`: run only deep-model flow.
 2. `--pipeline kfold`: run only k-fold flow.
-3. `--task binary`: switch to binary target.
-4. `--no-amp`: disable mixed precision.
-5. `--skip-deep-eval`: skip deep-model evaluation.
-6. `--skip-ensemble-eval`: skip ensemble evaluation.
-7. `--folds 0 1`: train selected folds only.
+3. `--no-amp`: disable mixed precision.
+4. `--skip-deep-eval`: skip deep-model evaluation.
+5. `--skip-ensemble-eval`: skip ensemble evaluation.
+6. `--folds 0 1`: train selected folds only.
 
 ### B) Manual deep-model commands
 
 ```bash
 python scripts/prepare_brats_dataset.py --data-root data/MICCAI_BraTS2020_TrainingData --output-dir data/splits --val-ratio 0.2 --seed 42
-python scripts/train_brats_3d_unet.py --train-csv data/splits/train.csv --val-csv data/splits/val.csv --task multiclass --epochs 120 --batch-size 1 --num-workers 8 --modality t1ce --target-shape 128 128 128 --amp
-python scripts/evaluate_brats_3d_unet.py --csv data/splits/val.csv --checkpoint models/checkpoints/best.pt --task auto --device auto
+python scripts/train_brats_3d_unet.py --train-csv data/splits/train.csv --val-csv data/splits/val.csv --epochs 120 --batch-size 1 --num-workers 8 --target-shape 128 128 128 --amp
+python scripts/evaluate_brats_3d_unet.py --csv data/splits/val.csv --checkpoint models/checkpoints/best.pt --device auto
 ```
 
 ### C) Manual 5-fold + ensemble commands
 
 ```bash
 python scripts/prepare_brats_kfold_dataset.py --data-root data/MICCAI_BraTS2020_TrainingData --output-dir data/splits/folds --n-splits 5 --seed 42
-python scripts/train_brats_3d_unet_kfold.py --fold-root data/splits/folds --checkpoint-root models/kfold --task multiclass --epochs 120 --batch-size 1 --num-workers 8 --modality t1ce --target-shape 128 128 128 --amp
-python scripts/evaluate_brats_3d_unet_ensemble.py --csv data/splits/val.csv --checkpoint-glob "models/kfold/fold_*/best.pt" --modality t1ce --threshold 0.5 --device auto
+python scripts/train_brats_3d_unet_kfold.py --fold-root data/splits/folds --checkpoint-root models/kfold --epochs 120 --batch-size 1 --num-workers 8 --target-shape 128 128 128 --amp
+python scripts/evaluate_brats_3d_unet_ensemble.py --csv data/splits/val.csv --checkpoint-glob "models/kfold/fold_*/best.pt" --threshold 0.5 --device auto
 ```
 
 ### D) Showcase run in one command
@@ -303,7 +300,7 @@ Response includes:
 Current UI rendering:
 
 1. brain mesh: blue.
-2. aggregate tumor mesh: warm color (binary fallback).
+2. aggregate tumor mesh: warm color.
 3. multiclass overlays:
 4. label `1` (necrotic/non-enhancing core): orange.
 5. label `2` (edema): green.
@@ -332,7 +329,7 @@ sbatch hpc/slurm_eval_ensemble_3d_unet.sh
 2. `Deep-model checkpoint was not found`: train first or set the correct checkpoint path.
 3. `No ensemble checkpoints available`: ensure files exist under `models/kfold/fold_*/best.pt`.
 4. Out-of-memory on GPU: keep `--batch-size 1`, reduce `--target-shape`, or disable extra jobs.
-5. Mixed-task ensemble error: ensure all checkpoints in the ensemble are trained with the same `--task` mode.
+5. Incompatible ensemble checkpoint error: ensure all selected checkpoints are multimodal multiclass (`in_channels=4`, multiclass outputs).
 
 ## Disclaimer
 

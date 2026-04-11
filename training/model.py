@@ -50,7 +50,7 @@ class UpBlock(nn.Module):
 class UNet3D(nn.Module):
     def __init__(
         self,
-        in_channels: int = 1,
+        in_channels: int = 4,
         out_channels: int = 1,
         base_channels: int = 16,
     ) -> None:

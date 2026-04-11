@@ -1,4 +1,4 @@
-"""Evaluate K-fold ensemble checkpoints on a BraTS split CSV."""
+"""Evaluate multimodal multiclass K-fold ensemble checkpoints on a BraTS split CSV."""
 
 from __future__ import annotations
 
@@ -23,12 +23,11 @@ from training.utils import ensure_dir, resolve_device, save_json, utc_timestamp
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate ensemble segmentation on BraTS CSV split.")
+    parser = argparse.ArgumentParser(description="Evaluate multimodal multiclass ensemble segmentation on BraTS CSV split.")
     parser.add_argument("--csv", type=Path, default=Path("data") / "splits" / "val.csv")
     parser.add_argument("--checkpoint-glob", type=str, default="models/kfold/fold_*/best.pt")
     parser.add_argument("--checkpoints", type=Path, nargs="*", default=None)
     parser.add_argument("--report-dir", type=Path, default=Path("reports"))
-    parser.add_argument("--modality", type=str, choices=["flair", "t1", "t1ce", "t2"], default="t1ce")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", type=str, default="auto")
     return parser.parse_args()
@@ -74,14 +73,6 @@ def _safe_std(values: List[float]) -> float:
     return float(pstdev(values)) if len(values) > 1 else 0.0
 
 
-def _infer_task_from_checkpoint(checkpoint_path: Path, device: str) -> str:
-    _, config = load_model_from_checkpoint(checkpoint_path, device=device, use_cache=True)
-    config_task = str(config.get("task", "")).strip().lower()
-    if config_task in {"binary", "multiclass"}:
-        return config_task
-    return "multiclass" if int(config.get("out_channels", 1)) > 1 else "binary"
-
-
 def _dice_iou(pred: np.ndarray, target: np.ndarray, eps: float = 1e-6) -> tuple[float, float]:
     pred = pred.astype(bool)
     target = target.astype(bool)
@@ -96,6 +87,47 @@ def _dice_iou(pred: np.ndarray, target: np.ndarray, eps: float = 1e-6) -> tuple[
     return float(dice), float(iou)
 
 
+def _validate_checkpoint_config(checkpoint_path: Path, device: str) -> None:
+    _, config = load_model_from_checkpoint(checkpoint_path, device=device, use_cache=True)
+
+    in_channels = int(config.get("in_channels", 4))
+    out_channels = int(config.get("out_channels", 4))
+    task = str(config.get("task", "multiclass")).strip().lower()
+
+    if in_channels != 4:
+        raise RuntimeError(f"Expected multimodal checkpoint with in_channels=4, got {in_channels}: {checkpoint_path}")
+    if out_channels not in {3, 4}:
+        raise RuntimeError(f"Expected multiclass out_channels in {{3, 4}}, got {out_channels}: {checkpoint_path}")
+    if task not in {"", "multiclass"}:
+        raise RuntimeError(f"Expected multiclass checkpoint task, got {task!r}: {checkpoint_path}")
+
+
+def _load_multimodal_volume(row: Dict[str, str]) -> tuple[np.ndarray, np.ndarray]:
+    modality_names = ("flair", "t1", "t1ce", "t2")
+    channels: list[np.ndarray] = []
+    first_shape: tuple[int, ...] | None = None
+
+    for name in modality_names:
+        path = Path(row[name])
+        image = nib.load(str(path))
+        data = image.get_fdata(dtype=np.float32)
+        data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+        if data.ndim != 3:
+            raise ValueError(f"Expected 3D NIfTI for {name}, got {data.shape}")
+
+        shape = tuple(int(v) for v in data.shape)
+        if first_shape is None:
+            first_shape = shape
+        elif shape != first_shape:
+            raise ValueError(f"All modalities must share shape. {name}={shape}, expected={first_shape}")
+
+        channels.append(data)
+
+    seg = nib.load(str(Path(row["seg"]))).get_fdata(dtype=np.float32)
+    return np.stack(channels, axis=0).astype(np.float32), seg
+
+
 def main() -> int:
     args = parse_args()
 
@@ -105,7 +137,8 @@ def main() -> int:
 
     rows = _read_csv_rows(csv_path)
     checkpoints = _discover_checkpoints(args)
-    task = _infer_task_from_checkpoint(checkpoints[0], str(device))
+    for checkpoint in checkpoints:
+        _validate_checkpoint_config(checkpoint, str(device))
 
     case_rows: List[Dict[str, float | str]] = []
     dice_scores: List[float] = []
@@ -114,14 +147,7 @@ def main() -> int:
     class_iou_scores: Dict[int, List[float]] = {1: [], 2: [], 4: []}
 
     for row in rows:
-        image_path = Path(row[args.modality])
-        seg_path = Path(row["seg"])
-
-        image = nib.load(str(image_path))
-        volume = image.get_fdata(dtype=np.float32)
-        volume = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-
-        seg = nib.load(str(seg_path)).get_fdata(dtype=np.float32)
+        volume, seg = _load_multimodal_volume(row)
         target_mask = seg > 0
         target_class_map = multiclass_indices_to_brats_labels(seg_to_multiclass_indices(seg))
 
@@ -138,20 +164,19 @@ def main() -> int:
         gt_voxels = int(target_mask.sum())
 
         class_metrics: Dict[str, Dict[str, float]] = {}
-        if task == "multiclass":
-            predicted_class_map = details.get("_class_label_map")
-            if isinstance(predicted_class_map, np.ndarray):
-                for class_label in (1, 2, 4):
-                    class_dice, class_iou = _dice_iou(
-                        predicted_class_map == class_label,
-                        target_class_map == class_label,
-                    )
-                    class_dice_scores[class_label].append(class_dice)
-                    class_iou_scores[class_label].append(class_iou)
-                    class_metrics[str(class_label)] = {
-                        "dice": class_dice,
-                        "iou": class_iou,
-                    }
+        predicted_class_map = details.get("_class_label_map")
+        if isinstance(predicted_class_map, np.ndarray):
+            for class_label in (1, 2, 4):
+                class_dice, class_iou = _dice_iou(
+                    predicted_class_map == class_label,
+                    target_class_map == class_label,
+                )
+                class_dice_scores[class_label].append(class_dice)
+                class_iou_scores[class_label].append(class_iou)
+                class_metrics[str(class_label)] = {
+                    "dice": class_dice,
+                    "iou": class_iou,
+                }
 
         case_row: Dict[str, float | str] = {
             "case_id": row["case_id"],
@@ -167,30 +192,30 @@ def main() -> int:
 
     summary = {
         "cases": len(case_rows),
-        "task": task,
+        "task": "multiclass",
+        "input_channels": 4,
         "mean_dice": _safe_mean(dice_scores),
         "std_dice": _safe_std(dice_scores),
         "mean_iou": _safe_mean(iou_scores),
         "std_iou": _safe_std(iou_scores),
     }
 
-    if task == "multiclass":
-        summary["per_class"] = {
-            str(class_label): {
-                "mean_dice": _safe_mean(class_dice_scores[class_label]),
-                "std_dice": _safe_std(class_dice_scores[class_label]),
-                "mean_iou": _safe_mean(class_iou_scores[class_label]),
-                "std_iou": _safe_std(class_iou_scores[class_label]),
-            }
-            for class_label in (1, 2, 4)
+    summary["per_class"] = {
+        str(class_label): {
+            "mean_dice": _safe_mean(class_dice_scores[class_label]),
+            "std_dice": _safe_std(class_dice_scores[class_label]),
+            "mean_iou": _safe_mean(class_iou_scores[class_label]),
+            "std_iou": _safe_std(class_iou_scores[class_label]),
         }
+        for class_label in (1, 2, 4)
+    }
 
     report = {
         "csv": str(csv_path),
         "checkpoints": [str(path) for path in checkpoints],
         "device": str(device),
-        "task": task,
-        "modality": args.modality,
+        "task": "multiclass",
+        "input_channels": 4,
         "threshold": float(args.threshold),
         "summary": summary,
         "cases": case_rows,

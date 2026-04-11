@@ -1,4 +1,4 @@
-"""PyTorch datasets for BraTS binary and multiclass segmentation."""
+"""PyTorch dataset for multimodal BraTS multiclass segmentation."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
+BRATS_MODALITIES = ("flair", "t1", "t1ce", "t2")
 BRATS_CLASS_LABELS = (0, 1, 2, 4)
 MULTICLASS_INDEX_TO_BRATS_LABEL = {0: 0, 1: 1, 2: 2, 3: 4}
 
@@ -61,21 +62,12 @@ class BraTSTorchDataset(Dataset):
     def __init__(
         self,
         records: Sequence[Dict[str, str]],
-        modality: str = "t1ce",
         target_shape: Tuple[int, int, int] = (128, 128, 128),
         augment: bool = False,
-        task: str = "binary",
     ) -> None:
-        if modality not in {"flair", "t1", "t1ce", "t2"}:
-            raise ValueError(f"Unsupported modality: {modality}")
-        if task not in {"binary", "multiclass"}:
-            raise ValueError(f"Unsupported task: {task}")
-
         self.records = list(records)
-        self.modality = modality
         self.target_shape = tuple(int(v) for v in target_shape)
         self.augment = augment
-        self.task = task
 
     def __len__(self) -> int:
         return len(self.records)
@@ -96,29 +88,52 @@ class BraTSTorchDataset(Dataset):
                 mask = torch.flip(mask, dims=[axis])
         return image, mask
 
+    def _load_multimodal_case(self, row: Dict[str, str]) -> tuple[np.ndarray, Tuple[float, float, float]]:
+        channels: list[np.ndarray] = []
+        first_shape: Tuple[int, ...] | None = None
+        first_spacing: Tuple[float, float, float] | None = None
+
+        for modality in BRATS_MODALITIES:
+            image_np, spacing = _load_nifti(Path(row[modality]))
+            if image_np.ndim != 3:
+                raise ValueError(f"Expected 3D volume for {modality}, got shape {image_np.shape}")
+
+            shape = tuple(int(v) for v in image_np.shape)
+            if first_shape is None:
+                first_shape = shape
+                first_spacing = spacing
+            else:
+                if shape != first_shape:
+                    raise ValueError(
+                        f"All modalities must share identical shape. {modality}={shape}, expected={first_shape}"
+                    )
+                if first_spacing is not None and not np.allclose(np.array(spacing), np.array(first_spacing), atol=1e-4):
+                    raise ValueError(
+                        f"All modalities must share identical spacing. {modality}={spacing}, expected={first_spacing}"
+                    )
+
+            channels.append(normalize_nonzero(image_np))
+
+        stacked = np.stack(channels, axis=0).astype(np.float32)
+        spacing = first_spacing if first_spacing is not None else (1.0, 1.0, 1.0)
+        return stacked, spacing
+
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor | str]:
         row = self.records[index]
 
-        image_np, spacing = _load_nifti(Path(row[self.modality]))
+        image_np, spacing = self._load_multimodal_case(row)
         seg_np, _ = _load_nifti(Path(row["seg"]))
 
-        image_np = normalize_nonzero(image_np)
-        if self.task == "binary":
-            mask_np = (seg_np > 0).astype(np.float32)
-        else:
-            mask_np = seg_to_multiclass_indices(seg_np).astype(np.float32)
+        mask_np = seg_to_multiclass_indices(seg_np).astype(np.float32)
 
-        image = torch.from_numpy(image_np).unsqueeze(0).unsqueeze(0)
+        image = torch.from_numpy(image_np).unsqueeze(0)
         mask = torch.from_numpy(mask_np).unsqueeze(0).unsqueeze(0)
 
         image, mask = self._apply_resize(image, mask)
         if self.augment:
             image, mask = self._augment(image, mask)
 
-        if self.task == "binary":
-            final_mask = mask.squeeze(0).float()
-        else:
-            final_mask = mask.squeeze(0).squeeze(0).round().clamp(min=0, max=3).long()
+        final_mask = mask.squeeze(0).squeeze(0).round().clamp(min=0, max=3).long()
 
         return {
             "image": image.squeeze(0).float(),
@@ -126,20 +141,3 @@ class BraTSTorchDataset(Dataset):
             "case_id": row["case_id"],
             "spacing": torch.tensor(spacing, dtype=torch.float32),
         }
-
-
-class BraTSBinaryTorchDataset(BraTSTorchDataset):
-    def __init__(
-        self,
-        records: Sequence[Dict[str, str]],
-        modality: str = "t1ce",
-        target_shape: Tuple[int, int, int] = (128, 128, 128),
-        augment: bool = False,
-    ) -> None:
-        super().__init__(
-            records=records,
-            modality=modality,
-            target_shape=target_shape,
-            augment=augment,
-            task="binary",
-        )
