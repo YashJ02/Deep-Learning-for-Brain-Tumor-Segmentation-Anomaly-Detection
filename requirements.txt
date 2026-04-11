@@ -1,0 +1,13 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+numpy>=1.26.0
+scipy>=1.12.0
+scikit-image>=0.24.0
+nibabel>=5.2.0
+python-multipart>=0.0.9
+tensorflow
+tf-keras
+numpy
+opencv-python
+Pillow
+imutils

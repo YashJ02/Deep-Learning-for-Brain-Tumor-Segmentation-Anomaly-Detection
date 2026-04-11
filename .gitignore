@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+
+# Runtime artifacts
+*.log
+
+# Data and model payloads
+/data/*
+!/data/.gitkeep
+/models/*
+!/models/.gitkeep
