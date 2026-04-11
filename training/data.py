@@ -116,6 +116,42 @@ def split_cases(
     return train_records, val_records
 
 
+def kfold_cases(
+    records: Sequence[Dict[str, str]],
+    n_splits: int = 5,
+    seed: int = 42,
+) -> List[Tuple[List[Dict[str, str]], List[Dict[str, str]]]]:
+    if n_splits < 2:
+        raise ValueError("n_splits must be >= 2")
+    if len(records) < n_splits:
+        raise ValueError(f"Need at least {n_splits} records for {n_splits}-fold split")
+
+    shuffled = list(records)
+    random.Random(seed).shuffle(shuffled)
+
+    fold_sizes = [len(shuffled) // n_splits] * n_splits
+    for idx in range(len(shuffled) % n_splits):
+        fold_sizes[idx] += 1
+
+    folds: List[List[Dict[str, str]]] = []
+    start = 0
+    for size in fold_sizes:
+        end = start + size
+        folds.append(shuffled[start:end])
+        start = end
+
+    result: List[Tuple[List[Dict[str, str]], List[Dict[str, str]]]] = []
+    for fold_index in range(n_splits):
+        val_records = folds[fold_index]
+        train_records: List[Dict[str, str]] = []
+        for idx, fold_records in enumerate(folds):
+            if idx != fold_index:
+                train_records.extend(fold_records)
+        result.append((train_records, val_records))
+
+    return result
+
+
 def summarize_cases(records: Iterable[Dict[str, str]]) -> Dict[str, int]:
     count = 0
     for _ in records:

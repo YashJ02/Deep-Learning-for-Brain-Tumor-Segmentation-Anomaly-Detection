@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=brats3d-train
 #SBATCH --partition=gpu
+#SBATCH --account=your_nurc_project
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
@@ -14,10 +15,9 @@ cd "$PROJECT_DIR"
 
 mkdir -p logs reports models/checkpoints data/splits
 
-# Update these module names to match your HPC environment.
+# Northeastern Explorer module stack (NURC docs).
 module purge
-module load cuda/12.2
-module load python/3.11
+module load explorer anaconda3/2024.06 cuda/12.1.1
 
 python -m venv .venv
 source .venv/bin/activate

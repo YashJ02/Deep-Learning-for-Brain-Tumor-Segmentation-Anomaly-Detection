@@ -84,13 +84,76 @@ h1 {
 }
 
 input[type="file"],
-select {
+select,
+input[type="number"] {
   width: 100%;
   background: #0d1b2c;
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px;
+}
+
+.fold-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fold-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mini-action {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #102238;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.mini-action:hover {
+  border-color: var(--accent);
+}
+
+.mini-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fold-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #0d1b2c;
+  font-size: 12px;
+}
+
+.fold-option input {
+  accent-color: var(--accent);
+}
+
+.fold-empty {
+  width: 100%;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .action {

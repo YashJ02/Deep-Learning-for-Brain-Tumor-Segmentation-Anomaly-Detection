@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -131,3 +131,55 @@ def segment_with_checkpoint(
         "probability_max": float(np.max(probability)),
     }
     return mask, details
+
+
+def segment_with_checkpoint_ensemble(
+    volume: np.ndarray,
+    checkpoint_paths: Sequence[str | Path],
+    device: torch.device | str = "auto",
+    threshold: float = 0.5,
+    use_amp: bool = True,
+) -> Tuple[np.ndarray, Dict[str, object]]:
+    if not checkpoint_paths:
+        raise ValueError("checkpoint_paths cannot be empty")
+
+    probabilities = []
+    checkpoints = []
+    member_stats = []
+
+    for checkpoint_path in checkpoint_paths:
+        checkpoint = Path(checkpoint_path).resolve()
+        model, config = load_model_from_checkpoint(checkpoint_path=checkpoint, device=device)
+        target_shape = _extract_target_shape(config)
+        _, probability = predict_mask_from_volume(
+            model=model,
+            volume=volume,
+            device=device,
+            target_shape=target_shape,
+            threshold=threshold,
+            use_amp=use_amp,
+        )
+        probabilities.append(probability)
+        checkpoints.append(str(checkpoint))
+        member_stats.append(
+            {
+                "checkpoint": str(checkpoint),
+                "target_shape": list(target_shape) if target_shape is not None else None,
+                "probability_mean": float(np.mean(probability)),
+                "probability_max": float(np.max(probability)),
+            }
+        )
+
+    probability_stack = np.stack(probabilities, axis=0)
+    probability_mean = np.mean(probability_stack, axis=0).astype(np.float32)
+    mask = probability_mean >= float(threshold)
+
+    details: Dict[str, object] = {
+        "ensemble_size": int(len(checkpoints)),
+        "checkpoints": checkpoints,
+        "members": member_stats,
+        "probability_mean": float(np.mean(probability_mean)),
+        "probability_max": float(np.max(probability_mean)),
+    }
+
+    return mask.astype(bool), details

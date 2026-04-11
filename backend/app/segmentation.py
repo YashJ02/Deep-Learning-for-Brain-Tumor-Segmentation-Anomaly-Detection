@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import nibabel as nib
 import numpy as np
@@ -79,21 +79,125 @@ def segment_tumor_baseline(volume: np.ndarray) -> np.ndarray:
     return (labels == largest_component).astype(bool)
 
 
+def extract_brain_mask(volume: np.ndarray) -> np.ndarray:
+    smooth = ndi.gaussian_filter(volume, sigma=0.8)
+    non_zero = smooth[smooth > 0]
+
+    if non_zero.size == 0:
+        return np.zeros_like(smooth, dtype=bool)
+
+    threshold = max(float(np.percentile(non_zero, 20)), 0.05)
+    mask = smooth > threshold
+    mask = ndi.binary_opening(mask, structure=ball(1))
+    mask = ndi.binary_closing(mask, structure=ball(2))
+    mask = ndi.binary_fill_holes(mask)
+
+    labels, count = ndi.label(mask)
+    if count == 0:
+        return np.zeros_like(mask, dtype=bool)
+
+    component_sizes = np.bincount(labels.ravel())
+    component_sizes[0] = 0
+    largest_component = int(component_sizes.argmax())
+    return (labels == largest_component).astype(bool)
+
+
 def default_checkpoint_path() -> Path:
     return Path(__file__).resolve().parents[2] / "models" / "checkpoints" / "best.pt"
+
+
+def default_ensemble_checkpoint_paths() -> List[Path]:
+    project_root = Path(__file__).resolve().parents[2]
+    kfold_root = project_root / "models" / "kfold"
+    return sorted(kfold_root.glob("fold_*/best.pt"))
+
+
+def _extract_fold_index(path: Path) -> Optional[int]:
+    folder = path.parent.name
+    if not folder.startswith("fold_"):
+        return None
+    suffix = folder.split("fold_", maxsplit=1)[1]
+    if suffix.isdigit():
+        return int(suffix)
+    return None
+
+
+def available_fold_checkpoints() -> List[Dict[str, object]]:
+    items: List[Dict[str, object]] = []
+    for checkpoint in default_ensemble_checkpoint_paths():
+        items.append(
+            {
+                "fold_index": _extract_fold_index(checkpoint),
+                "path": str(checkpoint),
+            }
+        )
+    return items
+
+
+def resolve_ensemble_checkpoint_paths(fold_indices: Sequence[int]) -> List[Path]:
+    project_root = Path(__file__).resolve().parents[2]
+    fold_root = project_root / "models" / "kfold"
+
+    normalized = sorted(set(int(value) for value in fold_indices))
+    selected: List[Path] = []
+    missing: List[int] = []
+
+    for index in normalized:
+        if index < 0:
+            raise ValueError("Fold indices must be non-negative integers")
+        checkpoint = fold_root / f"fold_{index}" / "best.pt"
+        if checkpoint.exists():
+            selected.append(checkpoint)
+        else:
+            missing.append(index)
+
+    if missing:
+        raise FileNotFoundError(f"Missing fold checkpoints for indices: {missing}")
+
+    return selected
 
 
 def segment_tumor(
     volume: np.ndarray,
     engine: str = "auto",
     checkpoint_path: Optional[str] = None,
+    ensemble_checkpoint_paths: Optional[Sequence[Path]] = None,
     threshold: float = 0.5,
 ) -> Tuple[np.ndarray, Dict[str, object]]:
     engine = (engine or "auto").strip().lower()
-    if engine not in {"auto", "deep", "baseline"}:
-        raise ValueError("engine must be one of: auto, deep, baseline")
+    if engine not in {"auto", "deep", "ensemble", "baseline"}:
+        raise ValueError("engine must be one of: auto, deep, ensemble, baseline")
 
     checkpoint = Path(checkpoint_path) if checkpoint_path else default_checkpoint_path()
+    ensemble_paths = list(ensemble_checkpoint_paths) if ensemble_checkpoint_paths is not None else default_ensemble_checkpoint_paths()
+
+    if engine in {"auto", "ensemble"}:
+        if len(ensemble_paths) >= 1:
+            try:
+                from training.inference import segment_with_checkpoint_ensemble
+
+                ensemble_mask, details = segment_with_checkpoint_ensemble(
+                    volume=volume,
+                    checkpoint_paths=ensemble_paths,
+                    threshold=threshold,
+                )
+                return ensemble_mask.astype(bool), {
+                    "engine": "ensemble",
+                    "checkpoint": None,
+                    "fold_indices": [
+                        fold_index
+                        for fold_index in (_extract_fold_index(path) for path in ensemble_paths)
+                        if fold_index is not None
+                    ],
+                    **details,
+                }
+            except Exception as exc:
+                if engine == "ensemble":
+                    raise RuntimeError(f"Ensemble inference failed: {exc}") from exc
+        elif engine == "ensemble":
+            raise FileNotFoundError(
+                "No ensemble checkpoints available. Expected files under models/kfold/fold_*/best.pt"
+            )
 
     if engine in {"auto", "deep"}:
         if checkpoint.exists():
@@ -108,6 +212,7 @@ def segment_tumor(
                 return deep_mask.astype(bool), {
                     "engine": "deep",
                     "checkpoint": str(checkpoint),
+                    "fold_indices": [],
                     **details,
                 }
             except Exception as exc:
@@ -120,6 +225,7 @@ def segment_tumor(
     return baseline_mask.astype(bool), {
         "engine": "baseline",
         "checkpoint": None,
+        "fold_indices": [],
         "probability_mean": None,
         "probability_max": None,
     }

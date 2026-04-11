@@ -1,12 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=brats3d-eval
+#SBATCH --job-name=brats3d-ens-eval
 #SBATCH --partition=gpu
 #SBATCH --account=your_nurc_project
-#SBATCH --gres=gpu:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=04:00:00
-#SBATCH --output=logs/eval_%j.out
+#SBATCH --gres=gpu:1
+#SBATCH --time=06:00:00
+#SBATCH --output=logs/ensemble_eval_%j.out
 
 set -euo pipefail
 
@@ -20,9 +22,9 @@ module load explorer anaconda3/2024.06 cuda/12.1.1
 
 source .venv/bin/activate
 
-python scripts/evaluate_brats_3d_unet.py \
+python scripts/evaluate_brats_3d_unet_ensemble.py \
   --csv data/splits/val.csv \
-  --checkpoint models/checkpoints/best.pt \
-  --batch-size 1 \
-  --num-workers 4 \
+  --checkpoint-glob "models/kfold/fold_*/best.pt" \
+  --modality t1ce \
+  --threshold 0.5 \
   --device auto

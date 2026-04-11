@@ -6,10 +6,10 @@ It includes:
 
 1. FastAPI web application with 3D mesh visualization.
 2. Dataset split generation for BraTS folders.
-3. CUDA-ready 3D U-Net training script.
+3. CUDA-ready 3D U-Net training scripts (single model + 5-fold launcher).
 4. Validation and report generation.
-5. Single-volume prediction CLI.
-6. HPC Slurm templates for Northeastern-style cluster workflows.
+5. Single-volume prediction CLI (single model + fold-ensemble).
+6. HPC Slurm templates for Northeastern Explorer, including job arrays.
 
 ## Repository Layout
 
@@ -24,9 +24,13 @@ It includes:
 - `training/metrics.py`: Dice and IoU metrics.
 - `training/inference.py`: checkpoint loading and 3D inference utilities.
 - `scripts/prepare_brats_dataset.py`: generate `all.csv`, `train.csv`, `val.csv`.
+- `scripts/prepare_brats_kfold_dataset.py`: generate fold CSV files under `data/splits/folds/`.
 - `scripts/train_brats_3d_unet.py`: main CUDA training entrypoint.
+- `scripts/train_brats_3d_unet_kfold.py`: local multi-fold launcher.
 - `scripts/evaluate_brats_3d_unet.py`: validation report script.
 - `scripts/predict_brats_3d_unet.py`: prediction for one input NIfTI file.
+- `scripts/evaluate_brats_3d_unet_ensemble.py`: evaluate fold-ensemble predictions.
+- `scripts/predict_brats_3d_unet_ensemble.py`: ensemble prediction for one input NIfTI file.
 - `hpc/`: Slurm templates and usage notes.
 
 ## Installation
@@ -68,7 +72,7 @@ Expected training folder example:
 
 - `data/MICCAI_BraTS2020_TrainingData`
 
-## Full Training Pipeline
+## Single-Model Training Pipeline
 
 ### 1) Build train/validation split CSV files
 
@@ -109,6 +113,44 @@ Default output:
 
 - `models/predictions/<input_name>_mask.nii.gz`
 
+## 5-Fold Training + Ensemble Pipeline
+
+### 1) Build 5-fold CSV split files
+
+```bash
+python scripts/prepare_brats_kfold_dataset.py --data-root data/MICCAI_BraTS2020_TrainingData --output-dir data/splits/folds --n-splits 5 --seed 42
+```
+
+### 2) Run local 5-fold launcher
+
+```bash
+python scripts/train_brats_3d_unet_kfold.py --fold-root data/splits/folds --checkpoint-root models/kfold --epochs 120 --batch-size 1 --num-workers 8 --modality t1ce --target-shape 128 128 128 --amp
+```
+
+Output checkpoints:
+
+- `models/kfold/fold_0/best.pt`
+- `models/kfold/fold_1/best.pt`
+- `models/kfold/fold_2/best.pt`
+- `models/kfold/fold_3/best.pt`
+- `models/kfold/fold_4/best.pt`
+
+### 3) Evaluate fold ensemble (stronger final Dice)
+
+```bash
+python scripts/evaluate_brats_3d_unet_ensemble.py --csv data/splits/val.csv --checkpoint-glob "models/kfold/fold_*/best.pt" --modality t1ce --threshold 0.5 --device auto
+```
+
+Output report:
+
+- `reports/eval_ensemble_*.json`
+
+### 4) Predict with fold ensemble
+
+```bash
+python scripts/predict_brats_3d_unet_ensemble.py --input data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1ce.nii --checkpoint-glob "models/kfold/fold_*/best.pt" --modality-index 0 --threshold 0.5
+```
+
 ## Run the Web App
 
 Start server:
@@ -129,14 +171,22 @@ Form fields:
 
 - `file`: `.nii` or `.nii.gz`
 - `modality_index`: integer for 4D volumes
-- `engine`: `auto`, `deep`, `baseline`
+- `engine`: `auto`, `deep`, `ensemble`, `baseline`
 - `threshold`: float in range `(0, 1)`
 
 Inference behavior:
 
-1. `auto`: uses deep model if checkpoint exists, otherwise baseline.
-2. `deep`: requires checkpoint, fails if unavailable.
-3. `baseline`: uses non-DL threshold+morphology pipeline.
+1. `auto`: uses fold ensemble if available, then single deep checkpoint, then baseline.
+2. `deep`: requires a single checkpoint at `models/checkpoints/best.pt`.
+3. `ensemble`: requires one or more fold checkpoints under `models/kfold/fold_*/best.pt`.
+4. `baseline`: uses non-DL threshold+morphology pipeline.
+
+Web UI enhancements:
+
+1. The sidebar now loads fold checkpoint inventory from `/api/checkpoints`.
+2. You can select which fold checkpoints are used for ensemble/auto mode.
+3. Fold selector controls include `Select all`, `Clear all`, and `Refresh inventory`.
+4. The metrics panel now includes ensemble confidence summary (`probability_mean`, `probability_max`, fold indices, and checkpoint count).
 
 ## HPC (Slurm) Usage
 
@@ -144,6 +194,8 @@ Templates:
 
 - `hpc/slurm_train_3d_unet.sh`
 - `hpc/slurm_eval_3d_unet.sh`
+- `hpc/slurm_train_3d_unet_kfold_array.sh`
+- `hpc/slurm_eval_ensemble_3d_unet.sh`
 
 Submit training:
 
@@ -157,7 +209,23 @@ Submit evaluation:
 sbatch hpc/slurm_eval_3d_unet.sh
 ```
 
-Cluster-specific options (partition/module names/account) should be updated in those scripts.
+Submit 5-fold job array:
+
+```bash
+sbatch hpc/slurm_train_3d_unet_kfold_array.sh
+```
+
+Submit ensemble evaluation:
+
+```bash
+sbatch hpc/slurm_eval_ensemble_3d_unet.sh
+```
+
+The Slurm templates are prefilled for Northeastern Explorer defaults:
+
+1. `--partition=gpu`
+2. `module load explorer anaconda3/2024.06 cuda/12.1.1`
+3. `--account=your_nurc_project` (replace with your actual allocation)
 
 ## Practical Notes
 
