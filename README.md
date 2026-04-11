@@ -119,8 +119,8 @@ CSV columns are:
 3. `models/checkpoints/history.json`: epoch-by-epoch training history.
 4. `models/brats_3d_unet_best.pt`: exported copy of best deep-model checkpoint.
 5. `models/kfold/fold_<k>/best.pt`: best checkpoint for fold `k`.
-6. `models/kfold_smoke/fold_<k>/*`: smoke-test fold checkpoints.
-7. `models/checkpoints_smoke/*`: smoke-test deep-model artifacts.
+6. `models/archive/legacy_single_modality/*`: archived legacy single-modality checkpoints.
+7. `models/archive/legacy_predictions/*`: archived smoke prediction outputs.
 
 ### Prediction artifacts
 
@@ -133,6 +133,16 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 
 1. `reports/eval_<timestamp>.json`: deep-model evaluation summary and per-case metrics.
 2. `reports/eval_ensemble_<timestamp>.json`: ensemble evaluation summary and per-case metrics.
+3. `reports/baseline_summary_<timestamp>.json`: consolidated baseline comparison for deep and ensemble runs.
+4. `reports/e2e_validation_<timestamp>.json`: CLI vs API end-to-end consistency validation.
+5. `reports/archive/*`: archived legacy or superseded reports.
+
+Current evaluation reports include reproducibility metadata:
+
+1. run configuration arguments.
+2. split fingerprint (`sha256`, row count).
+3. environment snapshot (Python, torch, CUDA).
+4. git commit hash when available.
 
 ## Complete Repository Guide (File-by-File)
 
@@ -182,6 +192,17 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 10. `scripts/train_brats_3d_unet_stub.py`: compatibility helper that prints migration commands.
 11. `scripts/run_training_pipeline.py`: one-command orchestrator for deep/kfold/all training flows.
 12. `scripts/run_showcase.py`: one-command showcase launcher for backend + browser.
+
+## Migration Notes (Multimodal Multiclass-Only)
+
+This repository has been migrated to multimodal multiclass-only behavior across training, evaluation, prediction, and API inference.
+
+1. Single-modality inference/training paths are removed.
+2. Binary task mode is removed.
+3. Inputs must include all four MRI modalities (`flair`, `t1`, `t1ce`, `t2`).
+4. Labels are handled as BraTS multiclass (`0/1/2/4`) with internal class indices (`0/1/2/3`).
+5. Legacy single-modality checkpoints are archived under `models/archive/legacy_single_modality/`.
+6. If you have older custom checkpoints, retrain them with `in_channels=4` and multiclass outputs before reuse.
 
 ### configs/
 
@@ -247,7 +268,27 @@ python scripts/train_brats_3d_unet_kfold.py --fold-root data/splits/folds --chec
 python scripts/evaluate_brats_3d_unet_ensemble.py --csv data/splits/val.csv --checkpoint-glob "models/kfold/fold_*/best.pt" --threshold 0.5 --device auto
 ```
 
-### D) Showcase run in one command
+### D) Copy-paste prediction examples (multimodal only)
+
+Deep checkpoint prediction:
+
+```bash
+python scripts/predict_brats_3d_unet.py --flair data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_flair.nii.gz --t1 data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1.nii.gz --t1ce data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1ce.nii.gz --t2 data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t2.nii.gz --checkpoint models/checkpoints/best.pt --output models/predictions/BraTS20_Training_001_mask.nii.gz --device auto
+```
+
+Ensemble prediction:
+
+```bash
+python scripts/predict_brats_3d_unet_ensemble.py --flair data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_flair.nii.gz --t1 data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1.nii.gz --t1ce data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1ce.nii.gz --t2 data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t2.nii.gz --checkpoint-glob "models/kfold/fold_*/best.pt" --output models/predictions/BraTS20_Training_001_ensemble_mask.nii.gz --device auto
+```
+
+API prediction example:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/segment" -F "flair_file=@data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_flair.nii.gz" -F "t1_file=@data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1.nii.gz" -F "t1ce_file=@data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t1ce.nii.gz" -F "t2_file=@data/MICCAI_BraTS2020_TrainingData/BraTS20_Training_001/BraTS20_Training_001_t2.nii.gz" -F "engine=deep" -F "threshold=0.5"
+```
+
+### E) Showcase run in one command
 
 ```bash
 python scripts/run_showcase.py
@@ -259,6 +300,18 @@ Useful options:
 2. `--no-open-browser`: do not launch browser automatically.
 3. `--no-reload`: disable autoreload.
 4. `--force-new-server`: ignore existing running instance and start a new one.
+
+## Quality Checks
+
+Local verification commands:
+
+```bash
+python -m compileall backend training scripts tests
+python -m ruff check backend training scripts tests --select E9,F63,F7,F82
+python -m pytest -q
+```
+
+Automated checks run on pull requests via `.github/workflows/ci.yml`.
 
 ## Web API
 

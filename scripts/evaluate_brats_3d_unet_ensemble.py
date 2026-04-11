@@ -19,7 +19,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from training.inference import load_model_from_checkpoint, segment_with_checkpoint_ensemble
 from training.torch_dataset import multiclass_indices_to_brats_labels, seg_to_multiclass_indices
-from training.utils import ensure_dir, resolve_device, save_json, utc_timestamp
+from training.utils import (
+    ensure_dir,
+    environment_metadata,
+    git_commit,
+    resolve_device,
+    save_json,
+    split_fingerprint,
+    utc_timestamp,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,6 +136,18 @@ def _load_multimodal_volume(row: Dict[str, str]) -> tuple[np.ndarray, np.ndarray
     return np.stack(channels, axis=0).astype(np.float32), seg
 
 
+def _serialize_run_config(args: argparse.Namespace) -> Dict[str, object]:
+    serialized: Dict[str, object] = {}
+    for key, value in vars(args).items():
+        if isinstance(value, Path):
+            serialized[key] = str(value)
+        elif isinstance(value, (list, tuple)):
+            serialized[key] = [str(item) if isinstance(item, Path) else item for item in value]
+        else:
+            serialized[key] = value
+    return serialized
+
+
 def main() -> int:
     args = parse_args()
 
@@ -217,6 +237,12 @@ def main() -> int:
         "task": "multiclass",
         "input_channels": 4,
         "threshold": float(args.threshold),
+        "run_config": _serialize_run_config(args),
+        "reproducibility": {
+            "git_commit": git_commit(PROJECT_ROOT),
+            "split": split_fingerprint(csv_path),
+            "environment": environment_metadata(device),
+        },
         "summary": summary,
         "cases": case_rows,
     }

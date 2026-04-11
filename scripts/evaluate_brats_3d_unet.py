@@ -20,7 +20,15 @@ from training.inference import load_model_from_checkpoint
 from training.losses import multiclass_ce_dice_loss
 from training.metrics import multiclass_dice_iou_from_logits
 from training.torch_dataset import BraTSTorchDataset
-from training.utils import ensure_dir, resolve_device, save_json, utc_timestamp
+from training.utils import (
+    ensure_dir,
+    environment_metadata,
+    git_commit,
+    resolve_device,
+    save_json,
+    split_fingerprint,
+    utc_timestamp,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +67,18 @@ def _validate_checkpoint_config(config: Dict[str, object]) -> None:
         raise RuntimeError(f"Expected multiclass out_channels in {{3, 4}}, received {out_channels}")
     if task not in {"", "multiclass"}:
         raise RuntimeError(f"Expected multiclass checkpoint task, received {task!r}")
+
+
+def _serialize_run_config(args: argparse.Namespace) -> Dict[str, object]:
+    serialized: Dict[str, object] = {}
+    for key, value in vars(args).items():
+        if isinstance(value, Path):
+            serialized[key] = str(value)
+        elif isinstance(value, tuple):
+            serialized[key] = list(value)
+        else:
+            serialized[key] = value
+    return serialized
 
 
 def main() -> int:
@@ -175,6 +195,12 @@ def main() -> int:
         "input_channels": 4,
         "target_shape": list(target_shape),
         "class_index_to_brats_label": {"0": 0, "1": 1, "2": 2, "3": 4},
+        "run_config": _serialize_run_config(args),
+        "reproducibility": {
+            "git_commit": git_commit(PROJECT_ROOT),
+            "split": split_fingerprint(csv_path),
+            "environment": environment_metadata(device),
+        },
         "summary": summary,
         "cases": rows,
     }

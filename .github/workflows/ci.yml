@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install CPU PyTorch and dev tooling
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+          python -m pip install pytest ruff
+
+      - name: Syntax validation
+        run: python -m compileall backend training scripts tests
+
+      - name: Lint (critical rules)
+        run: ruff check backend training scripts tests --select E9,F63,F7,F82
+
+      - name: Unit tests
+        run: pytest -q

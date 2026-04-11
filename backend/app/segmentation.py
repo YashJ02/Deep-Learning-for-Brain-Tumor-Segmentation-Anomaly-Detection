@@ -24,14 +24,6 @@ def _remove_small_components(mask: np.ndarray, min_size: int) -> np.ndarray:
     return keep[labels].astype(bool)
 
 
-def _percentile_normalize(volume: np.ndarray) -> np.ndarray:
-    volume = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-    p1, p99 = np.percentile(volume, [1, 99])
-    if p99 <= p1:
-        return np.zeros_like(volume, dtype=np.float32)
-    return np.clip((volume - p1) / (p99 - p1), 0.0, 1.0).astype(np.float32)
-
-
 def _reference_volume(volume: np.ndarray) -> np.ndarray:
     if volume.ndim == 4:
         return np.mean(volume, axis=0).astype(np.float32)
@@ -48,7 +40,7 @@ def load_multimodal_nifti_volumes(modality_paths: Dict[str, str]) -> Tuple[np.nd
 
     first_shape: Optional[Tuple[int, ...]] = None
     first_spacing: Optional[Tuple[float, float, float]] = None
-    normalized_channels: List[np.ndarray] = []
+    channels: List[np.ndarray] = []
 
     for name in required:
         path = str(modality_paths[name])
@@ -68,9 +60,9 @@ def load_multimodal_nifti_volumes(modality_paths: Dict[str, str]) -> Tuple[np.nd
             if first_spacing is not None and not np.allclose(np.array(spacing), np.array(first_spacing), atol=1e-4):
                 raise ValueError(f"All modality files must share the same voxel spacing. {name} spacing={spacing}, expected={first_spacing}")
 
-        normalized_channels.append(_percentile_normalize(data))
+        channels.append(np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32))
 
-    stacked = np.stack(normalized_channels, axis=0).astype(np.float32)
+    stacked = np.stack(channels, axis=0).astype(np.float32)
     return stacked, tuple(first_spacing if first_spacing is not None else (1.0, 1.0, 1.0))
 
 
