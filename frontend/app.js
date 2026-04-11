@@ -1075,7 +1075,7 @@
       }
 
       setRunning(true);
-      setStatus({ text: "Uploading volume and running segmentation...", type: "" });
+      setStatus({ text: "Uploading modality set and running segmentation...", type: "" });
 
       try {
         const formData = new FormData();
@@ -1149,8 +1149,8 @@
             <p className="eyebrow">BraTS 3D Pipeline</p>
             <h1>NeuroScope React Tumor Studio</h1>
             <p>
-              Upload a .nii or .nii.gz MRI volume, run segmentation, inspect a rotatable brain-plus-tumor mesh,
-              and compare class-wise volumetrics in one place.
+              Upload all four BraTS MRI modalities (.nii/.nii.gz), run segmentation, inspect a rotatable
+              brain-plus-tumor mesh, and compare class-wise volumetrics in one place.
             </p>
           </div>
           <div className="hero-grid">

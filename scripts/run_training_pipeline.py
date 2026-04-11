@@ -39,9 +39,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--pipeline",
-        choices=["single", "kfold", "all"],
+        choices=["deep", "kfold", "all"],
         default="all",
-        help="single: one checkpoint, kfold: 5-fold only, all: both",
+        help="deep: one deep-model checkpoint, kfold: 5-fold only, all: both",
     )
 
     parser.add_argument(
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         "--checkpoint-dir",
         type=Path,
         default=Path("models") / "checkpoints",
-        help="Directory for single-model checkpoints.",
+        help="Directory for deep-model checkpoints.",
     )
     parser.add_argument(
         "--kfold-checkpoint-root",
@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         help="Resume each selected fold from latest.pt if present.",
     )
     parser.add_argument(
-        "--skip-single-eval",
+        "--skip-deep-eval",
         action="store_true",
         help="Skip evaluate_brats_3d_unet.py step.",
     )
@@ -158,7 +158,7 @@ def main() -> int:
     log(f"Pipeline mode: {args.pipeline}")
     log(f"Data root: {data_root}")
 
-    # Always generate train/val splits. They are used by single training and ensemble eval.
+    # Always generate train/val splits. They are used by deep-model training and ensemble eval.
     run_command(
         [
             str(python_executable),
@@ -174,7 +174,7 @@ def main() -> int:
         ]
     )
 
-    if args.pipeline in {"single", "all"}:
+    if args.pipeline in {"deep", "all"}:
         train_command = [
             str(python_executable),
             str(SCRIPTS_DIR / "train_brats_3d_unet.py"),
@@ -220,7 +220,7 @@ def main() -> int:
 
         run_command(train_command)
 
-        if not args.skip_single_eval:
+        if not args.skip_deep_eval:
             run_command(
                 [
                     str(python_executable),
@@ -337,7 +337,7 @@ def main() -> int:
             )
 
     log("Pipeline completed successfully")
-    log(f"Single-model checkpoints: {checkpoint_dir}")
+    log(f"Deep-model checkpoints: {checkpoint_dir}")
     log(f"K-fold checkpoints: {kfold_checkpoint_root}")
     log(f"Reports: {report_dir}")
     return 0

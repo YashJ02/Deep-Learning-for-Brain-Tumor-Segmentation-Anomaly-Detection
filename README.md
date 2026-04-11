@@ -5,7 +5,7 @@ It includes:
 
 1. FastAPI backend + browser UI for interactive 3D visualization.
 2. Baseline and deep-learning segmentation engines (binary + multiclass).
-3. Single-model and 5-fold training workflows.
+3. Deep-model and 5-fold training workflows.
 4. Ensemble evaluation and prediction utilities.
 5. HPC Slurm templates (Northeastern Explorer defaults).
 
@@ -20,8 +20,8 @@ python scripts/run_training_pipeline.py --pipeline all --task multiclass --amp
 This command can run:
 
 1. Train/val split generation.
-2. Single-model training.
-3. Single-model evaluation.
+2. Deep-model training.
+3. Deep-model evaluation.
 4. K-fold split generation.
 5. K-fold training launcher.
 6. Ensemble evaluation.
@@ -89,8 +89,8 @@ Auto-detection scripts search under `data/` for folders containing `*_seg.nii*`.
 ### Split CSV files
 
 1. `data/splits/all.csv`: all discovered complete cases.
-2. `data/splits/train.csv`: training subset for single-model run.
-3. `data/splits/val.csv`: validation subset for single-model run.
+2. `data/splits/train.csv`: training subset for deep-model run.
+3. `data/splits/val.csv`: validation subset for deep-model run.
 4. `data/splits/train_smoke.csv`: tiny split for smoke tests.
 5. `data/splits/val_smoke.csv`: tiny validation split for smoke tests.
 
@@ -116,24 +116,24 @@ CSV columns are:
 
 ### Model artifacts
 
-1. `models/checkpoints/best.pt`: best single-model checkpoint by validation Dice.
-2. `models/checkpoints/latest.pt`: most recent single-model checkpoint.
+1. `models/checkpoints/best.pt`: best deep-model checkpoint by validation Dice.
+2. `models/checkpoints/latest.pt`: most recent deep-model checkpoint.
 3. `models/checkpoints/history.json`: epoch-by-epoch training history.
-4. `models/brats_3d_unet_best.pt`: exported copy of best single-model checkpoint.
+4. `models/brats_3d_unet_best.pt`: exported copy of best deep-model checkpoint.
 5. `models/kfold/fold_<k>/best.pt`: best checkpoint for fold `k`.
 6. `models/kfold_smoke/fold_<k>/*`: smoke-test fold checkpoints.
-7. `models/checkpoints_smoke/*`: smoke-test single-model artifacts.
+7. `models/checkpoints_smoke/*`: smoke-test deep-model artifacts.
 
 ### Prediction artifacts
 
-1. `models/predictions/<name>_mask.nii.gz`: single-model predicted binary mask.
+1. `models/predictions/<name>_mask.nii.gz`: deep-model predicted mask.
 2. `models/predictions/<name>_ensemble_mask.nii.gz`: ensemble predicted mask.
 
 When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in the mask file.
 
 ### Report artifacts
 
-1. `reports/eval_<timestamp>.json`: single-model evaluation summary and per-case metrics.
+1. `reports/eval_<timestamp>.json`: deep-model evaluation summary and per-case metrics.
 2. `reports/eval_ensemble_<timestamp>.json`: ensemble evaluation summary and per-case metrics.
 
 ## Complete Repository Guide (File-by-File)
@@ -165,7 +165,7 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 2. `training/torch_dataset.py`: BraTS PyTorch dataset loader, normalization, resize, augmentation.
 3. `training/losses.py`: binary BCE+Dice and multiclass CE+Dice losses.
 4. `training/metrics.py`: binary and multiclass Dice/IoU metrics from logits.
-5. `training/inference.py`: checkpoint loading, single-model and ensemble inference.
+5. `training/inference.py`: checkpoint loading, deep-model and ensemble inference.
 6. `training/data.py`: case discovery, CSV read/write, random split, k-fold split.
 7. `training/utils.py`: seed, directory, JSON, timestamp, device helpers.
 8. `training/__init__.py`: package marker.
@@ -182,18 +182,18 @@ When task is `multiclass`, prediction outputs store BraTS labels (`0/1/2/4`) in 
 8. `scripts/predict_brats_3d_unet.py`: infer one volume with one checkpoint (supports multiclass labels).
 9. `scripts/predict_brats_3d_unet_ensemble.py`: infer one volume with multiple fold checkpoints.
 10. `scripts/train_brats_3d_unet_stub.py`: compatibility helper that prints migration commands.
-11. `scripts/run_training_pipeline.py`: one-command orchestrator for single/kfold/all training flows.
+11. `scripts/run_training_pipeline.py`: one-command orchestrator for deep/kfold/all training flows.
 12. `scripts/run_showcase.py`: one-command showcase launcher for backend + browser.
 
 ### configs/
 
-1. `configs/train_brats_3d.example.args`: example argument file for single-model training.
+1. `configs/train_brats_3d.example.args`: example argument file for deep-model training.
 
 ### hpc/
 
 1. `hpc/README.md`: HPC script notes.
-2. `hpc/slurm_train_3d_unet.sh`: single-model training job.
-3. `hpc/slurm_eval_3d_unet.sh`: single-model evaluation job.
+2. `hpc/slurm_train_3d_unet.sh`: deep-model training job.
+3. `hpc/slurm_eval_3d_unet.sh`: deep-model evaluation job.
 4. `hpc/slurm_train_3d_unet_kfold_array.sh`: 5-fold array training job.
 5. `hpc/slurm_eval_ensemble_3d_unet.sh`: ensemble evaluation job.
 
@@ -226,15 +226,15 @@ python scripts/run_training_pipeline.py --pipeline all --task multiclass --amp
 
 Useful options:
 
-1. `--pipeline single`: run only single-model flow.
+1. `--pipeline deep`: run only deep-model flow.
 2. `--pipeline kfold`: run only k-fold flow.
 3. `--task binary`: switch to binary target.
 4. `--no-amp`: disable mixed precision.
-5. `--skip-single-eval`: skip single-model evaluation.
+5. `--skip-deep-eval`: skip deep-model evaluation.
 6. `--skip-ensemble-eval`: skip ensemble evaluation.
 7. `--folds 0 1`: train selected folds only.
 
-### B) Manual single-model commands
+### B) Manual deep-model commands
 
 ```bash
 python scripts/prepare_brats_dataset.py --data-root data/MICCAI_BraTS2020_TrainingData --output-dir data/splits --val-ratio 0.2 --seed 42
@@ -280,11 +280,13 @@ Returns checkpoint inventory:
 
 Form fields:
 
-1. `file`: `.nii` or `.nii.gz` volume.
-2. `modality_index`: channel index for 4D input.
-3. `engine`: `auto`, `deep`, `ensemble`, `baseline`.
-4. `threshold`: probability threshold in `(0, 1)`.
-5. `ensemble_folds`: comma-separated fold indices (optional).
+1. `flair_file`: required `.nii` or `.nii.gz` file.
+2. `t1_file`: required `.nii` or `.nii.gz` file.
+3. `t1ce_file`: required `.nii` or `.nii.gz` file.
+4. `t2_file`: required `.nii` or `.nii.gz` file.
+5. `engine`: `all`, `auto`, `deep`, `ensemble`, `baseline`.
+6. `threshold`: probability threshold in `(0, 1)`.
+7. `ensemble_folds`: comma-separated fold indices (optional; used by `ensemble`/`all`).
 
 Response includes:
 

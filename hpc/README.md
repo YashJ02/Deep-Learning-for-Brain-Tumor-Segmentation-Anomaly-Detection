@@ -11,7 +11,7 @@ Applied defaults in templates:
 
 Update `your_nurc_project` in each script to your allocation account.
 
-## Single-model training job
+## Deep-model training job
 
 Submit:
 
@@ -21,7 +21,7 @@ sbatch hpc/slurm_train_3d_unet.sh
 
 Script: `hpc/slurm_train_3d_unet.sh`
 
-## Single-model evaluation job
+## Deep-model evaluation job
 
 Submit:
 

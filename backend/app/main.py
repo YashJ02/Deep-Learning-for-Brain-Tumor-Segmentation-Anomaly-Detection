@@ -27,7 +27,7 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 app = FastAPI(
     title="BraTS 3D Segmentation Starter API",
     version="1.0.0",
-    description="Upload a NIfTI MRI volume and get a tumor mask mesh + measurements.",
+    description="Upload four BraTS NIfTI modalities (FLAIR/T1/T1ce/T2) and get tumor meshes + measurements.",
 )
 
 app.add_middleware(
@@ -84,10 +84,10 @@ def checkpoint_inventory() -> dict:
 
 @app.post("/api/segment")
 async def segment(
-    flair_file: UploadFile = File(...),
-    t1_file: UploadFile = File(...),
-    t1ce_file: UploadFile = File(...),
-    t2_file: UploadFile = File(...),
+    flair_file: UploadFile | None = File(None),
+    t1_file: UploadFile | None = File(None),
+    t1ce_file: UploadFile | None = File(None),
+    t2_file: UploadFile | None = File(None),
     engine: str = Form("all"),
     threshold: float = Form(0.5),
     ensemble_folds: str = Form(""),
@@ -99,6 +99,17 @@ async def segment(
         "t2": t2_file,
     }
 
+    missing_modalities = [
+        name
+        for name, upload in modality_uploads.items()
+        if upload is None or not (upload.filename or "").strip()
+    ]
+    if missing_modalities:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide all four modality files: flair, t1, t1ce, t2.",
+        )
+
     def _validate_nii_filename(filename: str) -> bool:
         return filename.endswith(".nii") or filename.endswith(".nii.gz")
 
@@ -106,6 +117,8 @@ async def segment(
     source_files: Dict[str, str] = {}
 
     for name, upload in modality_uploads.items():
+        if upload is None:
+            continue
         filename = (upload.filename or "").strip()
         if not _validate_nii_filename(filename):
             raise HTTPException(
@@ -125,6 +138,8 @@ async def segment(
     with tempfile.TemporaryDirectory() as tmp_dir:
         uploaded_paths = {}
         for modality_name, upload in modality_uploads.items():
+            if upload is None:
+                continue
             target_name = f"{modality_name}_{source_files[modality_name]}"
             modality_path = Path(tmp_dir) / target_name
             with modality_path.open("wb") as handle:
@@ -140,7 +155,6 @@ async def segment(
                     "t2": uploaded_paths["t2"],
                 }
             )
-            used_modality = -1
 
             selected_checkpoints = (
                 resolve_ensemble_checkpoint_paths(requested_fold_indices)
@@ -196,7 +210,6 @@ async def segment(
             "upload_mode": upload_mode,
             "volume_shape": [int(x) for x in volume.shape],
             "voxel_spacing_mm": [float(x) for x in spacing],
-            "modality_index": int(used_modality),
             "modality_mode": "all",
             "engine_requested": engine,
             "threshold": float(threshold),

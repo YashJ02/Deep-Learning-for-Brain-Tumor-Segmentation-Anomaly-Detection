@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, default=Path("models") / "checkpoints" / "best.pt")
     parser.add_argument("--output-mask", type=Path, default=None, help="Output NIfTI path for predicted mask")
     parser.add_argument("--output-probability", type=Path, default=None, help="Optional output NIfTI path for probability map")
-    parser.add_argument("--modality-index", type=int, default=3, help="Modality index for 4D volume input")
+    parser.add_argument("--channel-index", type=int, default=3, help="Channel index for 4D volume input")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--task", type=str, choices=["auto", "binary", "multiclass"], default="auto")
@@ -35,12 +35,12 @@ def _resolve_path(path: Path, project_root: Path) -> Path:
     return path if path.is_absolute() else (project_root / path)
 
 
-def _load_volume(input_path: Path, modality_index: int) -> tuple[np.ndarray, nib.Nifti1Image, int]:
+def _load_volume(input_path: Path, channel_index: int) -> tuple[np.ndarray, nib.Nifti1Image, int]:
     image = nib.load(str(input_path))
     data = image.get_fdata(dtype=np.float32)
 
     if data.ndim == 4:
-        index = int(np.clip(modality_index, 0, data.shape[3] - 1))
+        index = int(np.clip(channel_index, 0, data.shape[3] - 1))
         volume = data[..., index]
     elif data.ndim == 3:
         index = 0
@@ -72,7 +72,7 @@ def main() -> int:
     checkpoint_path = _resolve_path(args.checkpoint, project_root)
     device = resolve_device(args.device)
 
-    volume, image, used_modality = _load_volume(input_path, args.modality_index)
+    volume, image, used_modality = _load_volume(input_path, args.channel_index)
 
     model, config = load_model_from_checkpoint(checkpoint_path, device=device)
     task = _resolve_task(args.task, config)
@@ -140,7 +140,7 @@ def main() -> int:
     print(f"Checkpoint: {checkpoint_path}")
     print(f"Task: {task}")
     print(f"Device: {device}")
-    print(f"Used modality index: {used_modality}")
+    print(f"Used channel index: {used_modality}")
     print(f"Predicted mask: {output_mask}")
     if probability_path is not None:
         print(f"Probability map: {probability_path}")
