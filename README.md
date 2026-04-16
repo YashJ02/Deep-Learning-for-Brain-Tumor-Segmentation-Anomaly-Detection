@@ -77,6 +77,18 @@ This command:
 2. Waits for health check.
 3. Opens the browser to `http://localhost:8000`.
 
+### 3) Build isolated demo bundle (portable)
+
+```bash
+python scripts/create_demo_bundle.py --count 4 --seed 42
+```
+
+This command creates `data/demo_cases/` with 4 complete multimodal demo cases.
+
+1. It prefers copying random real BraTS cases from local `data/` roots.
+2. If not enough real cases are available, it fills missing slots with synthetic NIfTI demo cases.
+3. The frontend demo endpoints use this isolated folder, so demo availability is stable across machines.
+
 ## MRI Modality Guide (BraTS)
 
 BraTS case folders include four MRI modalities plus segmentation labels:
@@ -231,6 +243,7 @@ Current evaluation reports include reproducibility metadata:
 10. `scripts/train_brats_3d_unet_stub.py`: compatibility helper that prints migration commands.
 11. `scripts/run_training_pipeline.py`: one-command orchestrator for deep/kfold/all training flows.
 12. `scripts/run_showcase.py`: one-command showcase launcher for backend + browser.
+13. `scripts/create_demo_bundle.py`: create/share isolated demo cases in `data/demo_cases`.
 
 ## Migration Notes (Multimodal Multiclass-Only)
 

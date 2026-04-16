@@ -25,6 +25,7 @@ from .segmentation import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+DATA_ROOT = PROJECT_ROOT / "data"
 
 app = FastAPI(
     title="BraTS 3D Segmentation Starter API",
@@ -66,6 +67,115 @@ def _parse_fold_indices(raw_value: str) -> list[int] | None:
     return sorted(set(parsed))
 
 
+def _resolve_case_modality_paths(case_dir: Path) -> Dict[str, Path]:
+    modalities = ["flair", "t1", "t1ce", "t2"]
+    resolved: Dict[str, Path] = {}
+
+    for modality in modalities:
+        matches = sorted(case_dir.glob(f"*_{modality}.nii")) + sorted(case_dir.glob(f"*_{modality}.nii.gz"))
+        if not matches:
+            raise FileNotFoundError(f"Missing modality {modality} in case directory: {case_dir}")
+        resolved[modality] = matches[0]
+
+    return resolved
+
+
+def _demo_case_dirs() -> list[Path]:
+    preferred_root = DATA_ROOT / "MICCAI_BraTS2020_TrainingData"
+    roots = [preferred_root] if preferred_root.exists() else []
+
+    if not roots and DATA_ROOT.exists():
+        roots = [path for path in DATA_ROOT.iterdir() if path.is_dir()]
+
+    case_dirs: list[Path] = []
+    for root in roots:
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            try:
+                _resolve_case_modality_paths(child)
+            except FileNotFoundError:
+                continue
+            case_dirs.append(child)
+
+    return case_dirs
+
+
+def _run_segmentation_with_paths(
+    modality_paths: Dict[str, str],
+    *,
+    engine: str,
+    threshold: float,
+    requested_fold_indices: list[int] | None,
+    filename: str,
+    upload_mode: str,
+    source_files: Dict[str, str],
+) -> dict:
+    volume, spacing = load_multimodal_nifti_volumes(modality_paths)
+
+    selected_checkpoints = (
+        resolve_ensemble_checkpoint_paths(requested_fold_indices)
+        if requested_fold_indices is not None
+        else None
+    )
+    mask, inference_info, class_label_map = segment_tumor(
+        volume,
+        engine=engine,
+        threshold=threshold,
+        ensemble_checkpoint_paths=selected_checkpoints,
+    )
+    inference_info["input_mode"] = "multimodal"
+
+    metrics = compute_tumor_metrics(mask, spacing)
+    mesh = build_mesh_from_mask(mask, spacing, target_max_dim=140)
+    brain_mask = extract_brain_mask(volume)
+    brain_mesh = build_mesh_from_mask(brain_mask, spacing, target_max_dim=156)
+
+    class_metrics: dict = {}
+    class_meshes: list[dict] = []
+    if class_label_map is not None:
+        class_metrics = compute_class_metrics(class_label_map, spacing)
+        class_colors = {
+            "1": "#f97316",
+            "2": "#22c55e",
+            "4": "#ef4444",
+        }
+        for class_label, descriptor in BRATS_CLASS_DEFINITIONS.items():
+            label_key = str(class_label)
+            class_mask = class_label_map == int(class_label)
+            class_mesh = build_mesh_from_mask(class_mask, spacing, target_max_dim=132)
+            class_meshes.append(
+                {
+                    "label": int(class_label),
+                    "key": str(descriptor["key"]),
+                    "name": str(descriptor["name"]),
+                    "color": class_colors.get(label_key, "#f59e0b"),
+                    "mesh": class_mesh,
+                }
+            )
+
+    return {
+        "status": "ok",
+        "input": {
+            "filename": filename,
+            "source_files": source_files,
+            "upload_mode": upload_mode,
+            "volume_shape": [int(x) for x in volume.shape],
+            "voxel_spacing_mm": [float(x) for x in spacing],
+            "modality_mode": "all",
+            "engine_requested": engine,
+            "threshold": float(threshold),
+            "ensemble_folds_requested": requested_fold_indices,
+        },
+        "inference": inference_info,
+        "metrics": metrics,
+        "class_metrics": class_metrics,
+        "mesh": mesh,
+        "brain_mesh": brain_mesh,
+        "class_meshes": class_meshes,
+    }
+
+
 @app.get("/api/checkpoints")
 def checkpoint_inventory() -> dict:
     deep_checkpoint = preferred_deep_checkpoint_path()
@@ -83,6 +193,71 @@ def checkpoint_inventory() -> dict:
             "folds": fold_entries,
         },
     }
+
+
+@app.get("/api/demo-patients")
+def demo_patients() -> dict:
+    candidates = _demo_case_dirs()[:4]
+    if not candidates:
+        return {"status": "ok", "patients": []}
+
+    patients: list[dict] = []
+    for case_dir in candidates:
+        paths = _resolve_case_modality_paths(case_dir)
+        patients.append(
+            {
+                "case_id": case_dir.name,
+                "source": str(case_dir.parent.name),
+                "modalities": {
+                    key: str(path.name)
+                    for key, path in paths.items()
+                },
+            }
+        )
+
+    return {"status": "ok", "patients": patients}
+
+
+@app.post("/api/segment-demo")
+async def segment_demo(
+    case_id: str = Form(""),
+    engine: str = Form("all"),
+    threshold: float = Form(0.5),
+    ensemble_folds: str = Form(""),
+) -> dict:
+    case_id = (case_id or "").strip()
+    if not case_id:
+        raise HTTPException(status_code=400, detail="case_id is required")
+    if not (0.0 < float(threshold) < 1.0):
+        raise HTTPException(status_code=400, detail="threshold must be in range (0, 1).")
+
+    try:
+        requested_fold_indices = _parse_fold_indices(ensemble_folds)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid ensemble_folds value: {exc}") from exc
+
+    case_dir = next((path for path in _demo_case_dirs() if path.name == case_id), None)
+    if case_dir is None:
+        raise HTTPException(status_code=404, detail=f"Unknown demo case_id: {case_id}")
+
+    try:
+        modality_paths = _resolve_case_modality_paths(case_dir)
+        source_files = {key: path.name for key, path in modality_paths.items()}
+        return _run_segmentation_with_paths(
+            {key: str(path) for key, path in modality_paths.items()},
+            engine=engine,
+            threshold=float(threshold),
+            requested_fold_indices=requested_fold_indices,
+            filename=case_id,
+            upload_mode="demo-case",
+            source_files=source_files,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid demo case: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid request: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
 
 
 @app.post("/api/segment")
@@ -150,81 +325,26 @@ async def segment(
             uploaded_paths[modality_name] = str(modality_path)
 
         try:
-            volume, spacing = load_multimodal_nifti_volumes(
+            return _run_segmentation_with_paths(
                 {
                     "flair": uploaded_paths["flair"],
                     "t1": uploaded_paths["t1"],
                     "t1ce": uploaded_paths["t1ce"],
                     "t2": uploaded_paths["t2"],
-                }
-            )
-
-            selected_checkpoints = (
-                resolve_ensemble_checkpoint_paths(requested_fold_indices)
-                if requested_fold_indices is not None
-                else None
-            )
-            mask, inference_info, class_label_map = segment_tumor(
-                volume,
+                },
                 engine=engine,
-                threshold=threshold,
-                ensemble_checkpoint_paths=selected_checkpoints,
+                threshold=float(threshold),
+                requested_fold_indices=requested_fold_indices,
+                filename=filename,
+                upload_mode=upload_mode,
+                source_files=source_files,
             )
-            inference_info["input_mode"] = "multimodal"
-            metrics = compute_tumor_metrics(mask, spacing)
-            mesh = build_mesh_from_mask(mask, spacing, target_max_dim=140)
-            brain_mask = extract_brain_mask(volume)
-            brain_mesh = build_mesh_from_mask(brain_mask, spacing, target_max_dim=156)
-
-            class_metrics: dict = {}
-            class_meshes: list[dict] = []
-            if class_label_map is not None:
-                class_metrics = compute_class_metrics(class_label_map, spacing)
-                class_colors = {
-                    "1": "#f97316",
-                    "2": "#22c55e",
-                    "4": "#ef4444",
-                }
-                for class_label, descriptor in BRATS_CLASS_DEFINITIONS.items():
-                    label_key = str(class_label)
-                    class_mask = class_label_map == int(class_label)
-                    class_mesh = build_mesh_from_mask(class_mask, spacing, target_max_dim=132)
-                    class_meshes.append(
-                        {
-                            "label": int(class_label),
-                            "key": str(descriptor["key"]),
-                            "name": str(descriptor["name"]),
-                            "color": class_colors.get(label_key, "#f59e0b"),
-                            "mesh": class_mesh,
-                        }
-                    )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid request: {exc}") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid request: {exc}") from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
-
-    return {
-        "status": "ok",
-        "input": {
-            "filename": filename,
-            "source_files": source_files,
-            "upload_mode": upload_mode,
-            "volume_shape": [int(x) for x in volume.shape],
-            "voxel_spacing_mm": [float(x) for x in spacing],
-            "modality_mode": "all",
-            "engine_requested": engine,
-            "threshold": float(threshold),
-            "ensemble_folds_requested": requested_fold_indices,
-        },
-        "inference": inference_info,
-        "metrics": metrics,
-        "class_metrics": class_metrics,
-        "mesh": mesh,
-        "brain_mesh": brain_mesh,
-        "class_meshes": class_meshes,
-    }
 
 
 if FRONTEND_DIR.exists():

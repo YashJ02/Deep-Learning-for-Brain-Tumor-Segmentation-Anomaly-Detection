@@ -4,11 +4,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>NeuroScope Prime | 3D Intelligence + Reporting</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
@@ -23,24 +26,21 @@
     <script type="module">
       (async () => {
         try {
-          const [ReactModule, ReactDOMClientModule, htmModule, ThreeModule, R3FModule] = await Promise.all([
+          const [ReactModule, ReactDOMClientModule, htmModule] = await Promise.all([
             import("https://esm.sh/react@18.3.1"),
             import("https://esm.sh/react-dom@18.3.1/client"),
             import("https://esm.sh/htm@3.1.1"),
-            import("https://esm.sh/three@0.161.0"),
-            import("https://esm.sh/@react-three/fiber@8.16.8?deps=react@18.3.1,react-dom@18.3.1,three@0.161.0"),
           ]);
 
           window.React = ReactModule.default || ReactModule;
           window.ReactDOM = ReactDOMClientModule;
           window.htm = htmModule.default || htmModule;
-          window.THREE = ThreeModule;
-          window.ReactThreeFiber = R3FModule;
         } catch (error) {
           console.warn("Runtime module bootstrap failed", error);
         } finally {
+          const appVersion = "20260416-workflow-demo-2";
           const appScript = document.createElement("script");
-          appScript.src = "app.js";
+          appScript.src = `app.js?v=${appVersion}`;
           document.body.appendChild(appScript);
         }
       })();

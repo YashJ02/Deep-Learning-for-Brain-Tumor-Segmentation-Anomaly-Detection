@@ -13,6 +13,8 @@ __pycache__/
 # Data payloads (large, download via kagglehub)
 /data/*
 !/data/.gitkeep
+!/data/demo_cases/
+!/data/demo_cases/**
 
 # Model checkpoints (tracked in git, except latest.pt duplicates)
 !/models/**
