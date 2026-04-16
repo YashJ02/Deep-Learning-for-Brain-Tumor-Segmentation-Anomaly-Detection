@@ -31,7 +31,7 @@
       summary_title: "Executive Summary",
       findings_title: "Findings",
       analyst_note_prefix: "Analyst note",
-      summary_template: "Executive interpretation for {{case_id}}: {{detection_sentence}} Estimated tumor burden is {{volume_ml}} mL ({{burden_band}}), with equivalent diameter {{equivalent_diameter_mm}} mm and occupancy {{occupancy_percent}}%. {{dominant_class_sentence}}",
+      summary_template: "Executive interpretation for {{case_display_name}}: {{detection_sentence}} Estimated tumor burden is {{volume_ml}} mL ({{burden_band}}), with equivalent diameter {{equivalent_diameter_mm}} mm and occupancy {{occupancy_percent}}%. {{dominant_class_sentence}}",
       findings_templates: [
         "Burden profile: {{burden_band}} by volume estimate.",
         "Inference engine: {{engine_with_ensemble}}.",
@@ -46,7 +46,7 @@
       summary_title: "Clinical Impression",
       findings_title: "Clinical Findings",
       analyst_note_prefix: "Clinical note",
-      summary_template: "Clinical interpretation for {{case_id}}: {{detection_sentence_clinical}} Quantified tumor volume is {{volume_ml}} mL with equivalent diameter {{equivalent_diameter_mm}} mm and occupancy {{occupancy_percent}}%. {{dominant_class_sentence}}",
+      summary_template: "Clinical interpretation for {{case_display_name}}: {{detection_sentence_clinical}} Quantified tumor volume is {{volume_ml}} mL with equivalent diameter {{equivalent_diameter_mm}} mm and occupancy {{occupancy_percent}}%. {{dominant_class_sentence}}",
       findings_templates: [
         "Clinical burden category: {{burden_band}}.",
         "Estimated lesion extent (mm): [{{extent_mm}}].",
@@ -61,7 +61,7 @@
       summary_title: "Technical Interpretation",
       findings_title: "Technical Findings",
       analyst_note_prefix: "Operator note",
-      summary_template: "Technical interpretation for {{case_id}}: {{detection_sentence}} Pipeline used {{engine_with_ensemble}} at threshold {{threshold}}. Volume={{volume_ml}} mL, diameter={{equivalent_diameter_mm}} mm, occupancy={{occupancy_percent}}%.",
+      summary_template: "Technical interpretation for {{case_display_name}}: {{detection_sentence}} Pipeline used {{engine_with_ensemble}} at threshold {{threshold}}. Volume={{volume_ml}} mL, diameter={{equivalent_diameter_mm}} mm, occupancy={{occupancy_percent}}%.",
       findings_templates: [
         "Confidence statistics: mean={{confidence_mean}}, max={{confidence_max}}.",
         "Voxel occupancy: {{voxel_count}} voxels with extent [{{extent_mm}}] mm.",
@@ -140,6 +140,20 @@
       .replace(/_(flair|t1ce|t1|t2)\.nii(\.gz)?$/i, "")
       .replace(/\.nii(\.gz)?$/i, "")
       .trim() || "unknown_case";
+  }
+
+  function demoPatientDisplayName(patient) {
+    if (!patient) {
+      return "";
+    }
+
+    const displayName = String(patient.display_name || "").trim();
+    if (displayName) {
+      return displayName;
+    }
+
+    const caseId = String(patient.case_id || "").trim();
+    return caseId || "Unknown patient";
   }
 
   function timestampLabel() {
@@ -262,6 +276,7 @@
       .sort((a, b) => Number(b.volumeMl) - Number(a.volumeMl))[0] || null;
 
     const caseId = caseIdFromInput(result, context.selectedFiles);
+    const caseDisplayName = String(context.caseDisplayName || "").trim() || caseId;
     const generatedAtIso = window.dayjs ? window.dayjs().toISOString() : new Date().toISOString();
     const generatedAtDisplay = window.dayjs
       ? window.dayjs().format("YYYY-MM-DD HH:mm:ss")
@@ -278,6 +293,7 @@
 
     const templateValues = {
       case_id: caseId,
+      case_display_name: caseDisplayName,
       detection_sentence: metrics.detected ? "Tumor regions detected." : "No tumor region detected.",
       detection_sentence_clinical: metrics.detected
         ? "Tumor regions are detected in the current segmentation run."
@@ -318,6 +334,7 @@
       summary_title: template.summary_title,
       findings_title: template.findings_title,
       case_id: caseId,
+      case_display_name: caseDisplayName,
       executive_summary: summary,
       findings,
       source_files: {
@@ -376,7 +393,10 @@
       "# NeuroScope Prime Segmentation Report",
       "",
       `- Generated: ${report.generated_at_local}`,
-      `- Case: ${report.case_id}`,
+      `- Case: ${report.case_display_name || report.case_id}`,
+      ...(report.case_display_name && report.case_display_name !== report.case_id
+        ? [`- Case ID: ${report.case_id}`]
+        : []),
       `- Tone: ${report.tone}`,
       "",
       `## ${report.summary_title || "Executive Summary"}`,
@@ -691,6 +711,11 @@
       [demoPatients, selectedDemoCaseId],
     );
 
+    const selectedDemoPatientName = useMemo(
+      () => demoPatientDisplayName(selectedDemoPatient),
+      [selectedDemoPatient],
+    );
+
     const foldEntries = useMemo(() => {
       const folds = inventory && inventory.ensemble ? inventory.ensemble.folds : [];
       if (!Array.isArray(folds)) {
@@ -749,8 +774,9 @@
         reportNotes,
         thresholdValue: threshold,
         selectedFiles: multimodalFiles,
+        caseDisplayName: intakeMode === "demo" ? selectedDemoPatientName : "",
       }),
-      [result, reportTone, reportNotes, threshold, multimodalFiles],
+      [result, reportTone, reportNotes, threshold, multimodalFiles, intakeMode, selectedDemoPatientName],
     );
 
     const markdownPreview = useMemo(() => reportToMarkdown(reportObject), [reportObject]);
@@ -1199,7 +1225,7 @@
       setRunning(true);
       setStatus({
         text: usingDemoData
-          ? `Loading demo patient ${selectedDemoCaseId} and running inference...`
+          ? `Loading demo patient ${selectedDemoPatientName || selectedDemoCaseId} and running inference...`
           : "Uploading modalities and running inference...",
         type: "",
       });
@@ -1645,8 +1671,8 @@
                                   className=${`demo-patient-card ${selectedDemoCaseId === patient.case_id ? "active" : ""}`}
                                   onClick=${() => setSelectedDemoCaseId(patient.case_id)}
                                 >
-                                  <strong>${patient.case_id}</strong>
-                                  <span>${patient.source || "local"}</span>
+                                  <strong>${demoPatientDisplayName(patient)}</strong>
+                                  <span>${patient.case_id}</span>
                                 </button>
                               `)}
                         </div>
@@ -1654,7 +1680,7 @@
 
                   <p className="mini-note">
                     ${selectedDemoPatient
-                      ? `Selected demo case: ${selectedDemoPatient.case_id}`
+                      ? `Selected patient: ${selectedDemoPatientName}`
                       : "Select a demo case to continue."}
                   </p>
                 </div>
@@ -1773,7 +1799,7 @@
                   </div>
                   <div className="badge-row">
                     <div className="badge">Mode: ${intakeMode}</div>
-                    <div className="badge">Case: ${selectedDemoCaseId || "manual"}</div>
+                    <div className="badge">Case: ${intakeMode === "demo" ? (selectedDemoPatientName || selectedDemoCaseId || "demo") : "manual"}</div>
                     <div className="badge">Engine: ${result && result.inference ? result.inference.engine : "n/a"}</div>
                   </div>
                 </div>
@@ -1999,7 +2025,7 @@
                   <h2>Export Package</h2>
                   <p>Finalize and export report assets.</p>
                 </div>
-                <div className="badge">${reportObject ? `Case: ${reportObject.case_id}` : "No report"}</div>
+                <div className="badge">${reportObject ? `Case: ${reportObject.case_display_name || reportObject.case_id}` : "No report"}</div>
               </div>
 
               <div className="stack-actions export-actions">

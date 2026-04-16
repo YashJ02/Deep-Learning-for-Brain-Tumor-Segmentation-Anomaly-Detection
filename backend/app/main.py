@@ -27,6 +27,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 DATA_ROOT = PROJECT_ROOT / "data"
 
+DEMO_PATIENT_DISPLAY_NAMES = [
+    "Ava Bennett",
+    "Liam Carter",
+    "Sofia Hayes",
+    "Noah Turner",
+    "Mia Foster",
+    "Ethan Brooks",
+    "Isla Morgan",
+    "Lucas Reed",
+]
+
 app = FastAPI(
     title="BraTS 3D Segmentation Starter API",
     version="1.0.0",
@@ -81,24 +92,37 @@ def _resolve_case_modality_paths(case_dir: Path) -> Dict[str, Path]:
 
 
 def _demo_case_dirs() -> list[Path]:
-    preferred_root = DATA_ROOT / "MICCAI_BraTS2020_TrainingData"
-    roots = [preferred_root] if preferred_root.exists() else []
+    demo_roots = [
+        DATA_ROOT / "demo_cases",
+        DATA_ROOT / "demo",
+    ]
 
-    if not roots and DATA_ROOT.exists():
-        roots = [path for path in DATA_ROOT.iterdir() if path.is_dir()]
+    roots = [path for path in demo_roots if path.exists() and path.is_dir()]
+    if not roots:
+        return []
 
     case_dirs: list[Path] = []
+    seen: set[Path] = set()
     for root in roots:
         for child in sorted(root.iterdir()):
-            if not child.is_dir():
+            if not child.is_dir() or child in seen:
                 continue
             try:
                 _resolve_case_modality_paths(child)
             except FileNotFoundError:
                 continue
             case_dirs.append(child)
+            seen.add(child)
 
     return case_dirs
+
+
+def _demo_display_name(case_index: int) -> str:
+    base_name = DEMO_PATIENT_DISPLAY_NAMES[case_index % len(DEMO_PATIENT_DISPLAY_NAMES)]
+    cycle = case_index // len(DEMO_PATIENT_DISPLAY_NAMES)
+    if cycle == 0:
+        return base_name
+    return f"{base_name} {cycle + 1}"
 
 
 def _run_segmentation_with_paths(
@@ -202,11 +226,12 @@ def demo_patients() -> dict:
         return {"status": "ok", "patients": []}
 
     patients: list[dict] = []
-    for case_dir in candidates:
+    for case_index, case_dir in enumerate(candidates):
         paths = _resolve_case_modality_paths(case_dir)
         patients.append(
             {
                 "case_id": case_dir.name,
+                "display_name": _demo_display_name(case_index),
                 "source": str(case_dir.parent.name),
                 "modalities": {
                     key: str(path.name)
