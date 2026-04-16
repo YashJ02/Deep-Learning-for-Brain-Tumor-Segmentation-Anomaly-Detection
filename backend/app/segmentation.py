@@ -194,10 +194,6 @@ def _checkpoint_meta(checkpoint_path: Path) -> Dict[str, object]:
     return meta
 
 
-def _checkpoint_task(checkpoint_path: Path) -> str:
-    return str(_checkpoint_meta(checkpoint_path).get("task", "unknown"))
-
-
 def _checkpoint_is_multimodal_multiclass(checkpoint_path: Path) -> bool:
     meta = _checkpoint_meta(checkpoint_path)
     task = str(meta.get("task", "unknown"))
