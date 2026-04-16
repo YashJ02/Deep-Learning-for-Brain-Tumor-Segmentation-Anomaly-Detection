@@ -1,9 +1,12 @@
 // -----yash jain------
-(function bootstrapReactUI() {
+(function bootstrapNeuroScopePrime() {
   const { useEffect, useMemo, useRef, useState } = React;
   const html = htm.bind(React.createElement);
 
-  const MULTIMODAL_FILE_LABELS = {
+  const R3F = window.ReactThreeFiber || null;
+  const THREE = window.THREE || null;
+
+  const MODALITY_LABELS = {
     flair: "FLAIR",
     t1: "T1",
     t1ce: "T1ce",
@@ -14,664 +17,444 @@
     { value: "all", label: "All engines (ensemble > deep > baseline)" },
     { value: "auto", label: "Auto (ensemble > deep > baseline)" },
     { value: "deep", label: "Deep model only" },
-    { value: "ensemble", label: "Ensemble (k-fold checkpoints)" },
+    { value: "ensemble", label: "Ensemble only" },
     { value: "baseline", label: "Baseline only" },
   ];
 
+  const REPORT_TONES = [
+    { value: "executive", label: "Executive" },
+    { value: "clinical", label: "Clinical" },
+    { value: "technical", label: "Technical" },
+  ];
+
   const CLASS_ORDER = ["1", "2", "4"];
+  const CLASS_COLORS = {
+    "1": "#f97316",
+    "2": "#22c55e",
+    "4": "#ef4444",
+  };
 
-  function listOrNA(values) {
-    return Array.isArray(values) && values.length ? values.join(", ") : "N/A";
-  }
-
-  function toNumber(value) {
-    const num = Number(value);
-    return Number.isFinite(num) ? num : 0;
-  }
-
-  function fixed(value, digits) {
-    const num = Number(value);
-    return Number.isFinite(num) ? num.toFixed(digits) : "N/A";
-  }
-
-  function safeList(value) {
+  function safeArray(value) {
     return Array.isArray(value) ? value : [];
   }
 
-  function scaledVertices(vertices, scale) {
-    if (!Array.isArray(vertices) || vertices.length === 0 || scale === 1) {
-      return vertices;
-    }
-
-    const count = vertices.length;
-    const centroid = vertices.reduce(
-      (acc, point) => [acc[0] + point[0], acc[1] + point[1], acc[2] + point[2]],
-      [0, 0, 0],
-    );
-
-    const cx = centroid[0] / count;
-    const cy = centroid[1] / count;
-    const cz = centroid[2] / count;
-
-    return vertices.map((point) => [
-      cx + (point[0] - cx) * scale,
-      cy + (point[1] - cy) * scale,
-      cz + (point[2] - cz) * scale,
-    ]);
+  function toNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
-  function buildMeshTrace(mesh, options) {
-    const color = options.color;
-    const targetOpacity = Number.isFinite(options.opacity) ? options.opacity : 0.8;
-    const initialOpacity = Number.isFinite(options.initialOpacity)
-      ? options.initialOpacity
-      : targetOpacity;
-    const name = options.name;
-    const scale = Number.isFinite(options.scale) ? options.scale : 1;
-    const showLegend = options.showLegend !== false;
-
-    const vertices = scaledVertices(mesh.vertices, scale);
-    return {
-      type: "mesh3d",
-      x: vertices.map((v) => v[0]),
-      y: vertices.map((v) => v[1]),
-      z: vertices.map((v) => v[2]),
-      i: mesh.faces.map((f) => f[0]),
-      j: mesh.faces.map((f) => f[1]),
-      k: mesh.faces.map((f) => f[2]),
-      opacity: initialOpacity,
-      color,
-      name,
-      showlegend: showLegend,
-      flatshading: false,
-      showscale: false,
-      hoverinfo: "skip",
-      lighting: {
-        ambient: 0.62,
-        diffuse: 0.9,
-        roughness: 0.28,
-        fresnel: 0.16,
-        specular: 0.46,
-      },
-      lightposition: {
-        x: 120,
-        y: 90,
-        z: 180,
-      },
-    };
+  function fixed(value, digits = 2) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return "N/A";
+    }
+    return parsed.toFixed(digits);
   }
 
-  function buildScanlineTrace(brainMesh, initialOpacity) {
-    const vertices = brainMesh && Array.isArray(brainMesh.vertices) ? brainMesh.vertices : [];
-    if (!vertices.length) {
-      return null;
-    }
-
-    let xMin = Number.POSITIVE_INFINITY;
-    let xMax = Number.NEGATIVE_INFINITY;
-    let yMin = Number.POSITIVE_INFINITY;
-    let yMax = Number.NEGATIVE_INFINITY;
-    let zMin = Number.POSITIVE_INFINITY;
-    let zMax = Number.NEGATIVE_INFINITY;
-
-    vertices.forEach((vertex) => {
-      const x = Number(vertex[0]);
-      const y = Number(vertex[1]);
-      const z = Number(vertex[2]);
-
-      if (x < xMin) xMin = x;
-      if (x > xMax) xMax = x;
-      if (y < yMin) yMin = y;
-      if (y > yMax) yMax = y;
-      if (z < zMin) zMin = z;
-      if (z > zMax) zMax = z;
-    });
-
-    const trace = {
-      type: "surface",
-      x: [
-        [xMin, xMax],
-        [xMin, xMax],
-      ],
-      y: [
-        [yMin, yMin],
-        [yMax, yMax],
-      ],
-      z: [
-        [zMin, zMin],
-        [zMin, zMin],
-      ],
-      surfacecolor: [
-        [0, 0],
-        [0, 0],
-      ],
-      colorscale: [
-        [0, "rgba(120, 220, 255, 0.0)"],
-        [1, "rgba(120, 220, 255, 0.95)"],
-      ],
-      cmin: 0,
-      cmax: 1,
-      opacity: Number.isFinite(initialOpacity) ? initialOpacity : 0,
-      showscale: false,
-      hoverinfo: "skip",
-      showlegend: false,
-      lighting: {
-        ambient: 1,
-        diffuse: 0,
-        roughness: 0.1,
-        specular: 0,
-      },
-      contours: {
-        x: { show: false },
-        y: { show: false },
-        z: { show: false },
-      },
-    };
-
-    return {
-      trace,
-      zMin,
-      zMax,
-    };
+  function clamp(value, minValue, maxValue) {
+    return Math.min(maxValue, Math.max(minValue, value));
   }
 
-  function restyleMeshTrace(element, traceIndex, meshVertices, scale, opacity) {
-    if (!element || !element.data || !element.data[traceIndex]) {
-      return;
-    }
-
-    const vertices = scaledVertices(meshVertices, scale);
-    Plotly.restyle(
-      element,
-      {
-        x: [vertices.map((v) => v[0])],
-        y: [vertices.map((v) => v[1])],
-        z: [vertices.map((v) => v[2])],
-        opacity: [opacity],
-      },
-      [traceIndex],
+  function hasMesh(mesh) {
+    return Boolean(
+      mesh
+      && Array.isArray(mesh.vertices)
+      && Array.isArray(mesh.faces)
+      && mesh.vertices.length > 0
+      && mesh.faces.length > 0,
     );
   }
 
-  function animateMeshBuildSequence(element, traceSpecs) {
-    if (!window.anime || !element || !element.data || !Array.isArray(traceSpecs) || traceSpecs.length === 0) {
-      return null;
+  function basename(pathLike) {
+    if (!pathLike) {
+      return "";
+    }
+    const split = String(pathLike).split(/[/\\]+/g);
+    return split[split.length - 1] || "";
+  }
+
+  function caseIdFromInput(result, selectedFiles) {
+    const fromPayload = result && result.input && result.input.source_files
+      ? basename(result.input.source_files.flair)
+      : "";
+    const fromSelection = selectedFiles && selectedFiles.flair ? selectedFiles.flair.name : "";
+
+    const raw = fromPayload || fromSelection;
+    if (!raw) {
+      return "unknown_case";
     }
 
-    const totalDurationMs = 3000;
-    const leadInMs = 100;
-    const availableMs = Math.max(200, totalDurationMs - leadInMs);
+    return raw
+      .replace(/_(flair|t1ce|t1|t2)\.nii(\.gz)?$/i, "")
+      .replace(/\.nii(\.gz)?$/i, "")
+      .trim() || "unknown_case";
+  }
 
-    traceSpecs.forEach((spec, index) => {
-      spec.traceIndex = index;
-    });
-
-    const primarySpecs = traceSpecs.filter((spec) => spec.kind === "primary");
-    const glowSpecs = traceSpecs.filter((spec) => spec.kind === "glow");
-    const scanlineSpecs = traceSpecs.filter((spec) => spec.kind === "scanline");
-    if (!primarySpecs.length && !scanlineSpecs.length) {
-      return null;
+  function timestampLabel() {
+    if (window.dayjs) {
+      return window.dayjs().format("YYYY-MM-DD_HH-mm-ss");
     }
 
-    const cameraStart = { x: 2.35, y: 1.85, z: 1.72 };
-    const cameraEnd = { x: 1.55, y: 1.55, z: 1.25 };
-    const cameraState = { t: 0 };
+    const now = new Date();
+    return now.toISOString().replace(/[:.]/g, "-");
+  }
 
-    const timeline = anime.timeline({ autoplay: true });
+  function toneSummaryPrefix(tone) {
+    if (tone === "clinical") {
+      return "Clinical interpretation";
+    }
+    if (tone === "technical") {
+      return "Technical interpretation";
+    }
+    return "Executive interpretation";
+  }
 
-    timeline.add(
-      {
-        targets: cameraState,
-        t: 1,
-        duration: totalDurationMs,
-        easing: "easeInOutSine",
-        update: () => {
-          if (!element || !element.data) {
-            return;
-          }
+  function burdenBand(volumeMl) {
+    const v = toNumber(volumeMl, -1);
+    if (v < 0) {
+      return "Unknown";
+    }
+    if (v < 5) {
+      return "Low";
+    }
+    if (v < 20) {
+      return "Moderate";
+    }
+    return "High";
+  }
 
-          const t = Number(cameraState.t);
-          const mix = (a, b) => (a * (1 - t)) + (b * t);
-          const baseX = mix(cameraStart.x, cameraEnd.x);
-          const baseY = mix(cameraStart.y, cameraEnd.y);
-          const baseZ = mix(cameraStart.z, cameraEnd.z);
+  function classRowsFromResult(result) {
+    const classMetrics = result && result.class_metrics ? result.class_metrics : {};
 
-          // Slight orbit while moving in, so the build-up feels spatially dynamic.
-          const theta = (1 - t) * 0.55;
-          const cosT = Math.cos(theta);
-          const sinT = Math.sin(theta);
-          const eyeX = (baseX * cosT) - (baseY * sinT);
-          const eyeY = (baseX * sinT) + (baseY * cosT);
-
-          Plotly.relayout(element, {
-            "scene.camera": {
-              eye: { x: eyeX, y: eyeY, z: baseZ },
-              up: { x: 0, y: 0, z: 1 },
-            },
-          });
-        },
-      },
-      0,
-    );
-
-    scanlineSpecs.forEach((spec) => {
-      const scanline = {
-        z: Number(spec.zMin),
-        opacity: 0,
-      };
-
-      timeline.add(
-        {
-          targets: scanline,
-          z: Number(spec.zMax),
-          opacity: [0, 0.36, 0.22, 0],
-          duration: totalDurationMs,
-          easing: "easeInOutSine",
-          update: () => {
-            if (!element || !element.data || !element.data[spec.traceIndex]) {
-              return;
-            }
-
-            Plotly.restyle(
-              element,
-              {
-                z: [
-                  [
-                    [scanline.z, scanline.z],
-                    [scanline.z, scanline.z],
-                  ],
-                ],
-                opacity: [scanline.opacity],
-              },
-              [spec.traceIndex],
-            );
-          },
-          complete: () => {
-            if (!element || !element.data || !element.data[spec.traceIndex]) {
-              return;
-            }
-            Plotly.restyle(element, { opacity: [0] }, [spec.traceIndex]);
-          },
-        },
-        0,
-      );
-    });
-
-    const orderedPrimary = primarySpecs
-      .slice()
-      .sort((a, b) => Number(a.revealOrder) - Number(b.revealOrder));
-
-    const weights = orderedPrimary.map((_, index) => (index === 0 ? 1.25 : 1));
-    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
-    const revealWindows = new Map();
-    let cursor = leadInMs;
-
-    orderedPrimary.forEach((spec, index) => {
-      const slotDuration = Math.max(220, Math.round((availableMs * weights[index]) / totalWeight));
-      revealWindows.set(Number(spec.revealOrder), {
-        start: cursor,
-        duration: slotDuration,
-      });
-
-      const targetOpacity = Number.isFinite(spec.targetOpacity) ? Number(spec.targetOpacity) : 0.8;
-      const targetScale = Number.isFinite(spec.targetScale) ? Number(spec.targetScale) : 1;
-      const startOpacity = Number.isFinite(spec.initialOpacity) ? Number(spec.initialOpacity) : 0;
-      const startScale = Number.isFinite(spec.initialScale) ? Number(spec.initialScale) : targetScale;
-
-      const controller = {
-        opacity: startOpacity,
-        scale: startScale,
-        lastFrameMs: 0,
-      };
-
-      const overshootScale = targetScale * (targetScale >= 1 ? 1.045 : 1.07);
-      timeline.add(
-        {
-          targets: controller,
-          opacity: [
-            startOpacity,
-            targetOpacity * 0.76,
-            targetOpacity,
-          ],
-          scale: [startScale, overshootScale, targetScale],
-          duration: slotDuration,
-          easing: index === 0 ? "easeOutQuint" : "easeOutCubic",
-          update: () => {
-            if (!element || !element.data || !element.data[spec.traceIndex]) {
-              return;
-            }
-
-            const now = Date.now();
-            if (now - controller.lastFrameMs < 40) {
-              return;
-            }
-            controller.lastFrameMs = now;
-            restyleMeshTrace(
-              element,
-              spec.traceIndex,
-              spec.meshVertices,
-              controller.scale,
-              controller.opacity,
-            );
-          },
-          complete: () => {
-            restyleMeshTrace(element, spec.traceIndex, spec.meshVertices, targetScale, targetOpacity);
-          },
-        },
-        cursor,
-      );
-
-      cursor += slotDuration;
-    });
-
-    glowSpecs
-      .slice()
-      .sort((a, b) => Number(a.revealOrder) - Number(b.revealOrder))
-      .forEach((spec) => {
-        const window = revealWindows.get(Number(spec.revealOrder));
-        if (!window) {
-          return;
+    return CLASS_ORDER
+      .map((label) => {
+        const entry = classMetrics[label];
+        if (!entry) {
+          return null;
         }
 
-        const startOpacity = Number.isFinite(spec.initialOpacity) ? Number(spec.initialOpacity) : 0;
-        const peakOpacity = Number.isFinite(spec.peakOpacity) ? Number(spec.peakOpacity) : 0.42;
-        const initialScale = Number.isFinite(spec.initialScale) ? Number(spec.initialScale) : 1;
-        const peakScale = Number.isFinite(spec.peakScale) ? Number(spec.peakScale) : initialScale;
-        const finalScale = Number.isFinite(spec.targetScale) ? Number(spec.targetScale) : initialScale;
-
-        const controller = {
-          opacity: startOpacity,
-          scale: initialScale,
-          lastFrameMs: 0,
+        return {
+          label,
+          name: String(entry.name || `Class ${label}`),
+          detected: Boolean(entry.detected),
+          voxelCount: toNumber(entry.voxel_count, 0),
+          volumeMl: Number.isFinite(Number(entry.volume_ml)) ? Number(entry.volume_ml) : null,
+          color: CLASS_COLORS[label] || "#f59e0b",
         };
-
-        const duration = Math.max(360, Math.round(window.duration * 0.72));
-        const startAt = window.start + Math.round(window.duration * 0.14);
-
-        timeline.add(
-          {
-            targets: controller,
-            opacity: [startOpacity, peakOpacity, 0],
-            scale: [initialScale, peakScale, finalScale],
-            duration,
-            easing: "easeOutCubic",
-            update: () => {
-              if (!element || !element.data || !element.data[spec.traceIndex]) {
-                return;
-              }
-
-              const now = Date.now();
-              if (now - controller.lastFrameMs < 40) {
-                return;
-              }
-              controller.lastFrameMs = now;
-
-              restyleMeshTrace(
-                element,
-                spec.traceIndex,
-                spec.meshVertices,
-                controller.scale,
-                controller.opacity,
-              );
-            },
-            complete: () => {
-              restyleMeshTrace(element, spec.traceIndex, spec.meshVertices, finalScale, 0);
-            },
-          },
-          startAt,
-        );
-      });
-
-    return timeline;
+      })
+      .filter(Boolean);
   }
 
-  function buildMetricsRows(metrics, inference, classMetrics) {
-    if (!metrics || !inference) {
+  function metricCardsFromResult(result) {
+    if (!result) {
       return [];
     }
 
-    const rows = [
+    const metrics = result.metrics || {};
+    const inference = result.inference || {};
+    const mesh = result.mesh || {};
+
+    return [
       {
-        key: "Detected",
-        value: metrics.detected ? "Yes" : "No",
+        key: "Detection",
+        value: metrics.detected ? "Positive" : "Not detected",
         tone: metrics.detected ? "good" : "bad",
       },
-      { key: "Tumor voxels", value: String(metrics.voxel_count ?? "N/A") },
-      { key: "Occupancy", value: `${fixed(metrics.occupancy_percent, 4)} %` },
-      { key: "Volume", value: `${fixed(metrics.volume_mm3, 2)} mm^3` },
-      { key: "Volume", value: `${fixed(metrics.volume_ml, 3)} mL` },
+      {
+        key: "Tumor volume",
+        value: `${fixed(metrics.volume_ml, 3)} mL`,
+      },
       {
         key: "Equivalent diameter",
         value: `${fixed(metrics.equivalent_diameter_mm, 2)} mm`,
       },
       {
-        key: "BBox min",
-        value: `[${safeList(metrics.bbox_min).join(", ")}]`,
+        key: "Occupancy",
+        value: `${fixed(metrics.occupancy_percent, 4)} %`,
       },
       {
-        key: "BBox max",
-        value: `[${safeList(metrics.bbox_max).join(", ")}]`,
-      },
-      {
-        key: "Extent",
-        value: `[${safeList(metrics.extent_mm)
-          .map((x) => fixed(x, 2))
-          .join(", ")}] mm`,
-      },
-      {
-        key: "Centroid voxel",
-        value: `[${safeList(metrics.centroid_voxel)
-          .map((x) => fixed(x, 2))
-          .join(", ")}]`,
-      },
-      {
-        key: "Centroid mm",
-        value: `[${safeList(metrics.centroid_mm)
-          .map((x) => fixed(x, 2))
-          .join(", ")}]`,
-      },
-      {
-        key: "Inference engine",
-        value: String(inference.engine || "unknown"),
+        key: "Engine",
+        value: String(inference.engine || "N/A"),
       },
       {
         key: "Ensemble size",
         value: Number.isFinite(inference.ensemble_size) ? String(inference.ensemble_size) : "N/A",
       },
       {
-        key: "Probability mean",
+        key: "Confidence mean",
         value: Number.isFinite(inference.probability_mean) ? fixed(inference.probability_mean, 4) : "N/A",
       },
       {
-        key: "Probability max",
-        value: Number.isFinite(inference.probability_max) ? fixed(inference.probability_max, 4) : "N/A",
-      },
-      { key: "Fold indices used", value: listOrNA(inference.fold_indices || []) },
-      {
-        key: "Checkpoints used",
-        value: Array.isArray(inference.checkpoints)
-          ? `${inference.checkpoints.length} selected`
-          : inference.checkpoint || "N/A",
+        key: "Tumor mesh",
+        value: `${toNumber(mesh.vertex_count, 0)} vertices`,
       },
     ];
-
-    CLASS_ORDER.forEach((label) => {
-      const entry = classMetrics ? classMetrics[label] : null;
-      if (!entry) {
-        return;
-      }
-
-      rows.push({
-        key: `${entry.name} voxels`,
-        value: String(entry.voxel_count ?? "N/A"),
-        tone: entry.detected ? "good" : "",
-      });
-      rows.push({
-        key: `${entry.name} volume`,
-        value: `${fixed(entry.volume_ml, 3)} mL`,
-      });
-    });
-
-    return rows;
   }
 
-  function renderViewer(element, scene, options = {}) {
-    const animateBuild = Boolean(options.animateBuild);
+  function composeReport(result, context) {
+    if (!result) {
+      return null;
+    }
 
+    const metrics = result.metrics || {};
+    const inference = result.inference || {};
+    const input = result.input || {};
+    const mesh = result.mesh || {};
+    const brainMesh = result.brain_mesh || {};
+
+    const classRows = classRowsFromResult(result);
+    const dominantClass = classRows
+      .filter((row) => row.volumeMl !== null)
+      .sort((a, b) => Number(b.volumeMl) - Number(a.volumeMl))[0] || null;
+
+    const caseId = caseIdFromInput(result, context.selectedFiles);
+    const generatedAtIso = window.dayjs ? window.dayjs().toISOString() : new Date().toISOString();
+    const generatedAtDisplay = window.dayjs
+      ? window.dayjs().format("YYYY-MM-DD HH:mm:ss")
+      : new Date().toLocaleString();
+
+    const tone = String(context.reportTone || "executive");
+    const summary = `${toneSummaryPrefix(tone)} for ${caseId}: `
+      + `${metrics.detected ? "Tumor regions detected." : "No tumor region detected."} `
+      + `Estimated volume ${fixed(metrics.volume_ml, 3)} mL, equivalent diameter ${fixed(metrics.equivalent_diameter_mm, 2)} mm, occupancy ${fixed(metrics.occupancy_percent, 4)}%. `
+      + `${dominantClass ? `Dominant class: ${dominantClass.name} (${fixed(dominantClass.volumeMl, 3)} mL).` : "Dominant class not available."}`;
+
+    const findings = [
+      `Burden profile: ${burdenBand(metrics.volume_ml)} by volume estimate.`,
+      `Inference engine: ${String(inference.engine || "unknown")}${Number.isFinite(inference.ensemble_size) ? ` (ensemble size ${inference.ensemble_size})` : ""}.`,
+      `Voxel count: ${toNumber(metrics.voxel_count, 0)} with extent [${safeArray(metrics.extent_mm).map((item) => fixed(item, 2)).join(", ")}] mm.`,
+      `Tumor mesh complexity: ${toNumber(mesh.vertex_count, 0)} vertices / ${toNumber(mesh.face_count, 0)} faces.`,
+      `Brain mesh complexity: ${toNumber(brainMesh.vertex_count, 0)} vertices / ${toNumber(brainMesh.face_count, 0)} faces.`,
+    ];
+
+    if (context.reportNotes && context.reportNotes.trim()) {
+      findings.push(`Analyst note: ${context.reportNotes.trim()}`);
+    }
+
+    return {
+      report_title: "NeuroScope Prime Segmentation Report",
+      generated_at_iso: generatedAtIso,
+      generated_at_local: generatedAtDisplay,
+      tone,
+      case_id: caseId,
+      executive_summary: summary,
+      findings,
+      source_files: {
+        flair: input.source_files ? input.source_files.flair : null,
+        t1: input.source_files ? input.source_files.t1 : null,
+        t1ce: input.source_files ? input.source_files.t1ce : null,
+        t2: input.source_files ? input.source_files.t2 : null,
+      },
+      request: {
+        engine_requested: String(input.engine_requested || "unknown"),
+        threshold: toNumber(context.thresholdValue, toNumber(input.threshold, 0.5)),
+        ensemble_folds_requested: safeArray(input.ensemble_folds_requested),
+      },
+      inference: {
+        engine: String(inference.engine || "unknown"),
+        task: String(inference.task || "unknown"),
+        input_mode: String(inference.input_mode || "multimodal"),
+        ensemble_size: Number.isFinite(inference.ensemble_size) ? inference.ensemble_size : null,
+        fold_indices: safeArray(inference.fold_indices),
+        checkpoint: inference.checkpoint || null,
+        checkpoints: Array.isArray(inference.checkpoints) ? inference.checkpoints : null,
+        probability_mean: Number.isFinite(inference.probability_mean) ? Number(inference.probability_mean) : null,
+        probability_max: Number.isFinite(inference.probability_max) ? Number(inference.probability_max) : null,
+      },
+      metrics: {
+        detected: Boolean(metrics.detected),
+        voxel_count: toNumber(metrics.voxel_count, 0),
+        occupancy_percent: Number.isFinite(Number(metrics.occupancy_percent)) ? Number(metrics.occupancy_percent) : null,
+        volume_mm3: Number.isFinite(Number(metrics.volume_mm3)) ? Number(metrics.volume_mm3) : null,
+        volume_ml: Number.isFinite(Number(metrics.volume_ml)) ? Number(metrics.volume_ml) : null,
+        equivalent_diameter_mm: Number.isFinite(Number(metrics.equivalent_diameter_mm)) ? Number(metrics.equivalent_diameter_mm) : null,
+        centroid_mm: safeArray(metrics.centroid_mm),
+        extent_mm: safeArray(metrics.extent_mm),
+      },
+      class_breakdown: classRows,
+      mesh: {
+        tumor_vertex_count: toNumber(mesh.vertex_count, 0),
+        tumor_face_count: toNumber(mesh.face_count, 0),
+        brain_vertex_count: toNumber(brainMesh.vertex_count, 0),
+        brain_face_count: toNumber(brainMesh.face_count, 0),
+      },
+      notes: context.reportNotes || "",
+    };
+  }
+
+  function reportToMarkdown(report) {
+    if (!report) {
+      return "Run segmentation to generate report preview.";
+    }
+
+    const classLines = safeArray(report.class_breakdown)
+      .map((row) => `| ${row.label} | ${row.name} | ${row.detected ? "yes" : "no"} | ${row.voxelCount} | ${row.volumeMl === null ? "N/A" : fixed(row.volumeMl, 3)} |`)
+      .join("\n");
+
+    return [
+      "# NeuroScope Prime Segmentation Report",
+      "",
+      `- Generated: ${report.generated_at_local}`,
+      `- Case: ${report.case_id}`,
+      `- Tone: ${report.tone}`,
+      "",
+      "## Executive Summary",
+      "",
+      report.executive_summary,
+      "",
+      "## Findings",
+      "",
+      ...safeArray(report.findings).map((line) => `- ${line}`),
+      "",
+      "## Inference",
+      "",
+      `- Engine: ${report.inference.engine}`,
+      `- Task: ${report.inference.task}`,
+      `- Input mode: ${report.inference.input_mode}`,
+      `- Ensemble size: ${report.inference.ensemble_size === null ? "N/A" : report.inference.ensemble_size}`,
+      `- Folds used: ${safeArray(report.inference.fold_indices).length ? safeArray(report.inference.fold_indices).join(", ") : "N/A"}`,
+      "",
+      "## Core Metrics",
+      "",
+      `- Detected: ${report.metrics.detected ? "yes" : "no"}`,
+      `- Tumor volume (mL): ${report.metrics.volume_ml === null ? "N/A" : fixed(report.metrics.volume_ml, 3)}`,
+      `- Equivalent diameter (mm): ${report.metrics.equivalent_diameter_mm === null ? "N/A" : fixed(report.metrics.equivalent_diameter_mm, 2)}`,
+      `- Occupancy (%): ${report.metrics.occupancy_percent === null ? "N/A" : fixed(report.metrics.occupancy_percent, 4)}`,
+      "",
+      "## Class Breakdown",
+      "",
+      "| Label | Name | Detected | Voxels | Volume (mL) |",
+      "| --- | --- | --- | ---: | ---: |",
+      classLines || "| N/A | N/A | N/A | 0 | N/A |",
+      "",
+      "## Notes",
+      "",
+      report.notes || "No notes provided.",
+      "",
+    ].join("\n");
+  }
+
+  function downloadText(filename, text, mimeType) {
+    const blob = new Blob([text], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildMeshTrace(mesh, options) {
+    return {
+      type: "mesh3d",
+      x: mesh.vertices.map((point) => point[0]),
+      y: mesh.vertices.map((point) => point[1]),
+      z: mesh.vertices.map((point) => point[2]),
+      i: mesh.faces.map((face) => face[0]),
+      j: mesh.faces.map((face) => face[1]),
+      k: mesh.faces.map((face) => face[2]),
+      opacity: options.opacity,
+      color: options.color,
+      name: options.name,
+      showlegend: options.showLegend !== false,
+      hoverinfo: "skip",
+      showscale: false,
+      flatshading: false,
+      lighting: {
+        ambient: 0.62,
+        diffuse: 0.86,
+        roughness: 0.32,
+        specular: 0.42,
+      },
+      lightposition: {
+        x: 100,
+        y: 110,
+        z: 170,
+      },
+    };
+  }
+
+  function renderPlotlyScene(element, sceneModel) {
     if (!element) {
       return;
     }
 
-    if (!scene || !scene.inputInfo) {
+    if (!sceneModel || !sceneModel.inputInfo) {
       Plotly.purge(element);
       return;
     }
 
-    const inputInfo = scene.inputInfo;
-    const tumorMesh = scene.tumorMesh;
-    const brainMesh = scene.brainMesh;
-    const classMeshes = safeList(scene.classMeshes).filter((entry) =>
-      Boolean(entry && entry.mesh && safeList(entry.mesh.vertices).length),
-    );
+    const traces = [];
+    const targets = [];
 
-    const hasTumor = Boolean(tumorMesh && safeList(tumorMesh.vertices).length);
-    const hasBrain = Boolean(brainMesh && safeList(brainMesh.vertices).length);
-    const hasClassDataset = Boolean(scene.hasClassDataset);
-    const hasClassMeshes = classMeshes.length > 0;
-
-    if (!hasTumor && !hasBrain && !hasClassMeshes) {
-      Plotly.purge(element);
-      return;
-    }
-
-    const traceSpecs = [];
-    let revealOrder = 0;
-
-    if (hasBrain) {
-      const brainOpacity = 0.34;
-      const brainScale = 1;
-      const brainInitialScale = animateBuild ? 0.82 : brainScale;
-
-      traceSpecs.push({
-        kind: "primary",
-        revealOrder,
-        meshVertices: brainMesh.vertices,
-        targetScale: brainScale,
-        initialScale: brainInitialScale,
-        targetOpacity: brainOpacity,
-        initialOpacity: animateBuild ? 0.02 : brainOpacity,
-        trace: buildMeshTrace(brainMesh, {
-          color: "#55a5ff",
-          opacity: brainOpacity,
-          initialOpacity: animateBuild ? 0.02 : brainOpacity,
+    if (sceneModel.showBrain && hasMesh(sceneModel.brainMesh)) {
+      traces.push(
+        buildMeshTrace(sceneModel.brainMesh, {
           name: "Brain",
-          scale: brainInitialScale,
+          color: "#78b6ff",
+          opacity: sceneModel.animate ? 0.02 : sceneModel.brainOpacity,
         }),
-      });
-      revealOrder += 1;
-
-      if (animateBuild) {
-        const scanline = buildScanlineTrace(brainMesh, 0);
-        if (scanline) {
-          traceSpecs.push({
-            kind: "scanline",
-            trace: scanline.trace,
-            zMin: scanline.zMin,
-            zMax: scanline.zMax,
-          });
-        }
-      }
+      );
+      targets.push(sceneModel.brainOpacity);
     }
 
-    if (hasClassDataset) {
+    const classMeshes = safeArray(sceneModel.classMeshes).filter((entry) => hasMesh(entry.mesh));
+    if (sceneModel.showTumor && classMeshes.length > 0) {
       classMeshes.forEach((entry) => {
-        const classOpacity = 0.8;
-        const classScale = 0.92;
-        const classInitialScale = animateBuild ? classScale * 0.82 : classScale;
-        const layerOrder = revealOrder;
-
-        traceSpecs.push({
-          kind: "primary",
-          revealOrder: layerOrder,
-          meshVertices: entry.mesh.vertices,
-          targetScale: classScale,
-          initialScale: classInitialScale,
-          targetOpacity: classOpacity,
-          initialOpacity: animateBuild ? 0.02 : classOpacity,
-          trace: buildMeshTrace(entry.mesh, {
-            color: entry.color || "#ffb347",
-            opacity: classOpacity,
-            initialOpacity: animateBuild ? 0.02 : classOpacity,
+        traces.push(
+          buildMeshTrace(entry.mesh, {
             name: entry.name || `Class ${entry.label}`,
-            scale: classInitialScale,
+            color: entry.color || "#f59e0b",
+            opacity: sceneModel.animate ? 0.02 : sceneModel.tumorOpacity,
           }),
-        });
-
-        if (animateBuild) {
-          const glowScale = classScale * 1.03;
-          const glowInitialScale = classScale * 0.94;
-          traceSpecs.push({
-            kind: "glow",
-            revealOrder: layerOrder,
-            meshVertices: entry.mesh.vertices,
-            initialScale: glowInitialScale,
-            peakScale: classScale * 1.09,
-            targetScale: glowScale,
-            initialOpacity: 0,
-            peakOpacity: 0.4,
-            trace: buildMeshTrace(entry.mesh, {
-              color: entry.color || "#ffb347",
-              opacity: 0,
-              initialOpacity: 0,
-              name: `${entry.name || `Class ${entry.label}`} Glow`,
-              scale: glowInitialScale,
-              showLegend: false,
-            }),
-          });
-        }
-
-        revealOrder += 1;
+        );
+        targets.push(sceneModel.tumorOpacity);
       });
-    } else if (hasTumor) {
-      const tumorOpacity = 0.82;
-      const tumorScale = 0.92;
-      const tumorInitialScale = animateBuild ? tumorScale * 0.84 : tumorScale;
-
-      traceSpecs.push({
-        kind: "primary",
-        revealOrder,
-        meshVertices: tumorMesh.vertices,
-        targetScale: tumorScale,
-        initialScale: tumorInitialScale,
-        targetOpacity: tumorOpacity,
-        initialOpacity: animateBuild ? 0.02 : tumorOpacity,
-        trace: buildMeshTrace(tumorMesh, {
-          color: "#ffb347",
-          opacity: tumorOpacity,
-          initialOpacity: animateBuild ? 0.02 : tumorOpacity,
+    } else if (sceneModel.showTumor && hasMesh(sceneModel.tumorMesh)) {
+      traces.push(
+        buildMeshTrace(sceneModel.tumorMesh, {
           name: "Tumor",
-          scale: tumorInitialScale,
+          color: "#ffb347",
+          opacity: sceneModel.animate ? 0.02 : sceneModel.tumorOpacity,
         }),
-      });
+      );
+      targets.push(sceneModel.tumorOpacity);
     }
 
-    const traces = traceSpecs.map((entry) => entry.trace);
+    if (!traces.length) {
+      Plotly.purge(element);
+      return;
+    }
 
-    const shape = safeList(inputInfo.volume_shape);
-    const spacing = safeList(inputInfo.voxel_spacing_mm)
-      .map((x) => fixed(x, 2))
+    const shapeText = safeArray(sceneModel.inputInfo.volume_shape).join(" x ");
+    const spacingText = safeArray(sceneModel.inputInfo.voxel_spacing_mm)
+      .map((item) => fixed(item, 2))
       .join(", ");
 
     const layout = {
-      paper_bgcolor: "#07131d",
-      plot_bgcolor: "#07131d",
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
       margin: { l: 0, r: 0, t: 0, b: 0 },
-      uirevision: "mesh-viewer",
+      uirevision: "neuroscope-prime-scene",
+      legend: {
+        orientation: "h",
+        x: 1,
+        xanchor: "right",
+        y: 1,
+        yanchor: "top",
+        bgcolor: "rgba(10, 18, 28, 0.56)",
+        bordercolor: "rgba(179, 203, 231, 0.24)",
+        borderwidth: 1,
+        font: { color: "#c6d7ef", size: 12 },
+      },
       scene: {
-        bgcolor: "#07131d",
         dragmode: "orbit",
+        aspectmode: "data",
+        bgcolor: "rgba(0,0,0,0)",
         camera: {
-          eye: { x: 1.55, y: 1.55, z: 1.25 },
+          eye: { x: 1.58, y: 1.5, z: 1.2 },
           up: { x: 0, y: 0, z: 1 },
         },
         xaxis: {
@@ -695,18 +478,6 @@
           showticklabels: false,
           showbackground: false,
         },
-        aspectmode: "data",
-      },
-      legend: {
-        orientation: "h",
-        yanchor: "top",
-        y: 1,
-        xanchor: "right",
-        x: 1,
-        font: { color: "#c6dfef", size: 12 },
-        bgcolor: "rgba(6, 19, 29, 0.56)",
-        bordercolor: "rgba(139, 184, 212, 0.24)",
-        borderwidth: 1,
       },
       annotations: [
         {
@@ -715,52 +486,130 @@
           x: 0.01,
           y: 0.99,
           showarrow: false,
-          font: { color: "#9ebed5", size: 11 },
-          text: `Shape: ${shape.join(" x ")} | Spacing: ${spacing} mm`,
+          font: { size: 11, color: "#a6bbd8" },
+          text: `Shape: ${shapeText} | Spacing: ${spacingText} mm`,
         },
       ],
     };
 
-    const renderPromise = Plotly.react(element, traces, layout, {
+    Plotly.react(element, traces, layout, {
       responsive: true,
       displaylogo: false,
       scrollZoom: true,
-    });
+    }).then(() => {
+      if (!sceneModel.animate || !window.anime) {
+        return;
+      }
 
-    if (animateBuild && traceSpecs.length > 0 && window.anime) {
-      let cancelled = false;
-      let timeline = null;
-
-      Promise.resolve(renderPromise).then(() => {
-        if (cancelled) {
-          return;
-        }
-        timeline = animateMeshBuildSequence(element, traceSpecs);
-      });
-
-      return {
-        pause: () => {
-          cancelled = true;
-          if (timeline && typeof timeline.pause === "function") {
-            timeline.pause();
-          }
+      const motion = { t: 0 };
+      anime({
+        targets: motion,
+        t: 1,
+        duration: 1180,
+        easing: "easeOutQuart",
+        update: () => {
+          targets.forEach((targetOpacity, index) => {
+            const reveal = clamp((motion.t * 1.26) - (index * 0.16), 0, 1);
+            Plotly.restyle(element, { opacity: [targetOpacity * reveal] }, [index]);
+          });
         },
-      };
+      });
+    });
+  }
+
+  function HeroR3FExperience() {
+    const Canvas = R3F && R3F.Canvas ? R3F.Canvas : null;
+    const useFrame = R3F && R3F.useFrame ? R3F.useFrame : null;
+
+    if (!Canvas || !useFrame || !THREE) {
+      return html`
+        <div className="empty-chip">
+          R3F module is unavailable in the current runtime. Plotly clinical viewer remains fully active.
+        </div>
+      `;
     }
 
-    return null;
+    function PulseOrb() {
+      const orbRef = useRef(null);
+      const ringARef = useRef(null);
+      const ringBRef = useRef(null);
+
+      useFrame((state, delta) => {
+        if (!orbRef.current || !ringARef.current || !ringBRef.current) {
+          return;
+        }
+
+        const t = state.clock.getElapsedTime();
+
+        orbRef.current.rotation.y += delta * 0.38;
+        orbRef.current.rotation.x += delta * 0.13;
+
+        ringARef.current.rotation.z += delta * 0.54;
+        ringARef.current.rotation.y = Math.sin(t * 0.8) * 0.65;
+
+        ringBRef.current.rotation.x += delta * 0.42;
+        ringBRef.current.rotation.z = Math.cos(t * 0.66) * 0.58;
+      });
+
+      return html`
+        <group>
+          <ambientLight intensity=${0.62} />
+          <directionalLight position=${[2.8, 2.4, 3.7]} intensity=${1.18} color=${"#8dd9ff"} />
+          <pointLight position=${[-2.8, -1.5, 2.8]} intensity=${0.9} color=${"#ffc375"} />
+
+          <mesh ref=${orbRef}>
+            <icosahedronGeometry args=${[1.16, 6]} />
+            <meshPhysicalMaterial
+              color=${"#5ec5ff"}
+              roughness=${0.23}
+              metalness=${0.18}
+              clearcoat=${1}
+              clearcoatRoughness=${0.28}
+              transmission=${0.22}
+              thickness=${1.8}
+              emissive=${"#133046"}
+              emissiveIntensity=${0.48}
+            />
+          </mesh>
+
+          <mesh ref=${ringARef} rotation=${[Math.PI * 0.5, 0, 0]}>
+            <torusGeometry args=${[1.9, 0.05, 28, 280]} />
+            <meshStandardMaterial color=${"#ffb66a"} emissive=${"#7d4f1d"} emissiveIntensity=${0.62} />
+          </mesh>
+
+          <mesh ref=${ringBRef} rotation=${[Math.PI * 0.25, Math.PI * 0.16, Math.PI * 0.2]}>
+            <torusGeometry args=${[2.18, 0.028, 22, 280]} />
+            <meshStandardMaterial color=${"#66ffc4"} emissive=${"#1f4f3f"} emissiveIntensity=${0.56} />
+          </mesh>
+        </group>
+      `;
+    }
+
+    return html`
+      <div className="hero-canvas-shell">
+        <${Canvas}
+          camera=${{ position: [0, 0, 4.45], fov: 43 }}
+          gl=${{ antialias: true, alpha: true }}
+          dpr=${[1, 1.8]}
+        >
+          <${PulseOrb} />
+        </${Canvas}>
+      </div>
+    `;
   }
 
   function App() {
     const viewerRef = useRef(null);
-    const viewerAnimationRef = useRef(null);
-    const consumedBuildTokenRef = useRef(0);
+    const reportCardRef = useRef(null);
+    const consumedSceneTokenRef = useRef(0);
+
     const [multimodalFiles, setMultimodalFiles] = useState({
       flair: null,
       t1: null,
       t1ce: null,
       t2: null,
     });
+
     const [engineMode, setEngineMode] = useState("all");
     const [threshold, setThreshold] = useState("0.50");
 
@@ -771,10 +620,21 @@
 
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState(null);
-    const [meshBuildToken, setMeshBuildToken] = useState(0);
+    const [sceneToken, setSceneToken] = useState(0);
+
+    const [showBrain, setShowBrain] = useState(true);
+    const [showTumor, setShowTumor] = useState(true);
+    const [brainOpacity, setBrainOpacity] = useState(0.34);
+    const [tumorOpacity, setTumorOpacity] = useState(0.83);
+
     const [visibleClassLabels, setVisibleClassLabels] = useState(new Set());
+
+    const [reportTone, setReportTone] = useState("executive");
+    const [reportNotes, setReportNotes] = useState("");
+    const [exportingPdf, setExportingPdf] = useState(false);
+
     const [status, setStatus] = useState({
-      text: "Waiting for input.",
+      text: "Ready. Upload all four MRI modalities to begin.",
       type: "",
     });
 
@@ -783,92 +643,88 @@
       if (!Array.isArray(folds)) {
         return [];
       }
-
       return folds.filter((entry) => Number.isInteger(entry.fold_index));
     }, [inventory]);
 
     const selectedFoldIndices = useMemo(
-      () =>
-        Array.from(selectedFolds)
-          .map((v) => Number(v))
-          .filter((v) => Number.isInteger(v) && v >= 0)
-          .sort((a, b) => a - b),
+      () => Array.from(selectedFolds)
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0)
+        .sort((a, b) => a - b),
       [selectedFolds],
     );
 
-    const deepExists = Boolean(inventory && inventory.deep && inventory.deep.exists);
+    const deepAvailable = Boolean(inventory && inventory.deep && inventory.deep.exists);
 
-    const allClassMeshes = useMemo(() => {
+    const classMeshesAll = useMemo(() => {
       const meshes = result && Array.isArray(result.class_meshes) ? result.class_meshes : [];
-      return meshes.filter((entry) => Boolean(entry && entry.mesh && safeList(entry.mesh.vertices).length));
+      return meshes.filter((entry) => Boolean(entry && entry.mesh && hasMesh(entry.mesh)));
     }, [result]);
 
     const activeClassMeshes = useMemo(() => {
-      if (!allClassMeshes.length) {
+      if (!classMeshesAll.length) {
         return [];
       }
 
-      return allClassMeshes.filter((entry) => visibleClassLabels.has(String(entry.label)));
-    }, [allClassMeshes, visibleClassLabels]);
+      return classMeshesAll.filter((entry) => visibleClassLabels.has(String(entry.label)));
+    }, [classMeshesAll, visibleClassLabels]);
 
-    const scene = useMemo(() => {
+    const sceneModel = useMemo(() => {
       if (!result) {
         return null;
       }
 
       return {
-        tumorMesh: result.mesh,
-        brainMesh: result.brain_mesh,
-        classMeshes: activeClassMeshes,
-        hasClassDataset: allClassMeshes.length > 0,
         inputInfo: result.input,
+        brainMesh: result.brain_mesh,
+        tumorMesh: result.mesh,
+        classMeshes: activeClassMeshes,
+        showBrain,
+        showTumor,
+        brainOpacity,
+        tumorOpacity,
+        animate: false,
       };
-    }, [result, activeClassMeshes, allClassMeshes]);
+    }, [result, activeClassMeshes, showBrain, showTumor, brainOpacity, tumorOpacity]);
 
-    const metricRows = useMemo(
-      () => buildMetricsRows(result ? result.metrics : null, result ? result.inference : null, result ? result.class_metrics : null),
-      [result],
+    const metricCards = useMemo(() => metricCardsFromResult(result), [result]);
+    const classRows = useMemo(() => classRowsFromResult(result), [result]);
+
+    const reportObject = useMemo(
+      () => composeReport(result, {
+        reportTone,
+        reportNotes,
+        thresholdValue: threshold,
+        selectedFiles: multimodalFiles,
+      }),
+      [result, reportTone, reportNotes, threshold, multimodalFiles],
     );
 
-    const foldInfoText = useMemo(() => {
-      if (inventoryLoading) {
-        return "Loading checkpoint inventory...";
-      }
+    const markdownPreview = useMemo(() => reportToMarkdown(reportObject), [reportObject]);
 
-      if (inventoryError) {
-        return inventoryError;
-      }
+    const heroKpis = useMemo(() => {
+      const inference = result && result.inference ? result.inference : {};
+      const metrics = result && result.metrics ? result.metrics : {};
 
-      if (!foldEntries.length) {
-        return `No fold checkpoints found. Deep checkpoint available: ${deepExists ? "yes" : "no"}`;
-      }
-
-      return `${selectedFoldIndices.length}/${foldEntries.length} folds selected. Deep checkpoint available: ${deepExists ? "yes" : "no"}`;
-    }, [inventoryLoading, inventoryError, foldEntries, selectedFoldIndices, deepExists]);
-
-    const heroMetrics = useMemo(
-      () => [
+      return [
         {
           key: "Engine",
-          value: result && result.inference && result.inference.engine ? result.inference.engine : "not run",
+          value: inference.engine || "not run",
         },
         {
           key: "Task",
-          value: result && result.inference && result.inference.task ? result.inference.task : "n/a",
+          value: inference.task || "n/a",
         },
         {
-          key: "Input",
-          value: result && result.inference && result.inference.input_mode
-            ? result.inference.input_mode
-            : "multimodal",
+          key: "Tumor Volume",
+          value: result ? `${fixed(metrics.volume_ml, 3)} mL` : "n/a",
         },
         {
-          key: "Class Meshes",
-          value: result && Array.isArray(result.class_meshes) ? String(result.class_meshes.length) : "0",
+          key: "Risk Band",
+          value: result ? burdenBand(metrics.volume_ml) : "n/a",
         },
-      ],
-      [result],
-    );
+      ];
+    }, [result]);
 
     useEffect(() => {
       if (!window.anime) {
@@ -876,78 +732,44 @@
           node.style.opacity = "1";
           node.style.transform = "none";
         });
-        return undefined;
+        return;
       }
 
       const intro = anime({
         targets: ".reveal",
-        translateY: [22, 0],
+        translateY: [20, 0],
         opacity: [0, 1],
-        delay: anime.stagger(85),
-        duration: 900,
+        delay: anime.stagger(60),
+        duration: 840,
         easing: "easeOutExpo",
       });
 
-      const orbA = anime({
-        targets: ".orb-a",
-        translateX: [-20, 18],
-        translateY: [-14, 10],
-        duration: 6800,
+      const driftA = anime({
+        targets: ".prime-radial-a",
+        translateX: [-20, 16],
+        translateY: [-16, 14],
         direction: "alternate",
         loop: true,
+        duration: 7200,
         easing: "easeInOutSine",
       });
 
-      const orbB = anime({
-        targets: ".orb-b",
-        translateX: [24, -18],
+      const driftB = anime({
+        targets: ".prime-radial-b",
+        translateX: [18, -14],
         translateY: [16, -12],
-        duration: 7400,
         direction: "alternate",
         loop: true,
-        easing: "easeInOutSine",
-      });
-
-      const orbC = anime({
-        targets: ".orb-c",
-        translateX: [-14, 20],
-        translateY: [18, -10],
-        duration: 6200,
-        direction: "alternate",
-        loop: true,
+        duration: 7600,
         easing: "easeInOutSine",
       });
 
       return () => {
         intro.pause();
-        orbA.pause();
-        orbB.pause();
-        orbC.pause();
+        driftA.pause();
+        driftB.pause();
       };
     }, []);
-
-    useEffect(() => {
-      const hasScene = Boolean(scene && scene.inputInfo);
-      const animateBuild = hasScene && meshBuildToken > consumedBuildTokenRef.current;
-      if (animateBuild) {
-        consumedBuildTokenRef.current = meshBuildToken;
-      }
-
-      if (viewerAnimationRef.current && typeof viewerAnimationRef.current.pause === "function") {
-        viewerAnimationRef.current.pause();
-      }
-
-      const animationHandle = renderViewer(viewerRef.current, scene, {
-        animateBuild,
-      });
-      viewerAnimationRef.current = animationHandle;
-
-      return () => {
-        if (animationHandle && typeof animationHandle.pause === "function") {
-          animationHandle.pause();
-        }
-      };
-    }, [scene, meshBuildToken]);
 
     useEffect(() => {
       const onResize = () => {
@@ -961,26 +783,38 @@
     }, []);
 
     useEffect(() => {
-      const labels = allClassMeshes.map((entry) => String(entry.label));
+      const labels = classMeshesAll.map((entry) => String(entry.label));
       setVisibleClassLabels(new Set(labels));
-    }, [allClassMeshes]);
+    }, [classMeshesAll]);
 
     useEffect(() => {
-      if (!window.anime) {
-        return;
+      const shouldAnimate = sceneToken > consumedSceneTokenRef.current;
+      if (shouldAnimate) {
+        consumedSceneTokenRef.current = sceneToken;
       }
 
-      anime({
-        targets: ".metric-card",
-        opacity: [0, 1],
-        translateY: [10, 0],
-        delay: anime.stagger(16),
-        duration: 460,
-        easing: "easeOutQuad",
-      });
-    }, [metricRows.length]);
+      const effectiveModel = sceneModel
+        ? {
+            ...sceneModel,
+            animate: shouldAnimate,
+          }
+        : null;
 
-    async function loadCheckpointInventory() {
+      renderPlotlyScene(viewerRef.current, effectiveModel);
+    }, [sceneModel, sceneToken]);
+
+    useEffect(() => {
+      if (!window.lucide || typeof window.lucide.createIcons !== "function") {
+        return;
+      }
+      window.lucide.createIcons();
+    });
+
+    useEffect(() => {
+      refreshInventory();
+    }, []);
+
+    async function refreshInventory() {
       setInventoryLoading(true);
       setInventoryError("");
 
@@ -993,20 +827,19 @@
         }
 
         setInventory(payload);
-        const foldCandidate = payload && payload.ensemble ? payload.ensemble.folds : [];
-        const folds = Array.isArray(foldCandidate) ? foldCandidate : [];
-        const available = new Set(
-          folds
+
+        const availableFoldKeys = new Set(
+          safeArray(payload.ensemble && payload.ensemble.folds)
             .filter((entry) => Number.isInteger(entry.fold_index))
             .map((entry) => String(entry.fold_index)),
         );
 
         setSelectedFolds((prev) => {
-          const kept = Array.from(prev).filter((value) => available.has(value));
-          if (kept.length > 0) {
-            return new Set(kept);
+          const retained = Array.from(prev).filter((key) => availableFoldKeys.has(key));
+          if (retained.length > 0) {
+            return new Set(retained);
           }
-          return new Set(available);
+          return new Set(availableFoldKeys);
         });
       } catch (error) {
         setInventory(null);
@@ -1016,18 +849,13 @@
       }
     }
 
-    useEffect(() => {
-      loadCheckpointInventory();
-    }, []);
-
     function setAllFolds(checked) {
       if (!checked) {
         setSelectedFolds(new Set());
         return;
       }
 
-      const all = new Set(foldEntries.map((entry) => String(entry.fold_index)));
-      setSelectedFolds(all);
+      setSelectedFolds(new Set(foldEntries.map((entry) => String(entry.fold_index))));
     }
 
     function toggleFold(foldKey) {
@@ -1042,7 +870,7 @@
       });
     }
 
-    function toggleClassLabel(label) {
+    function toggleClass(label) {
       setVisibleClassLabels((prev) => {
         const next = new Set(prev);
         if (next.has(label)) {
@@ -1055,41 +883,42 @@
     }
 
     async function runSegmentation() {
-      const missingModalities = Object.entries(multimodalFiles)
-        .filter(([, selectedFile]) => !selectedFile)
-        .map(([name]) => MULTIMODAL_FILE_LABELS[name] || name.toUpperCase());
+      const missing = Object.entries(multimodalFiles)
+        .filter(([, file]) => !file)
+        .map(([key]) => MODALITY_LABELS[key] || key.toUpperCase());
 
-      if (missingModalities.length > 0) {
+      if (missing.length > 0) {
         setStatus({
-          text: `Please provide all four modality files. Missing: ${missingModalities.join(", ")}.`,
+          text: `Missing required modalities: ${missing.join(", ")}.`,
           type: "bad",
         });
+        return;
+      }
+
+      const thresholdNumeric = Number(threshold);
+      if (!Number.isFinite(thresholdNumeric) || thresholdNumeric <= 0 || thresholdNumeric >= 1) {
+        setStatus({ text: "Threshold must be between 0 and 1 (exclusive).", type: "bad" });
         return;
       }
 
       if (engineMode === "ensemble" && selectedFoldIndices.length === 0) {
-        setStatus({
-          text: "Select at least one fold checkpoint for ensemble mode.",
-          type: "bad",
-        });
+        setStatus({ text: "Select at least one fold for ensemble mode.", type: "bad" });
         return;
       }
 
       setRunning(true);
-      setStatus({ text: "Uploading modality set and running segmentation...", type: "" });
+      setStatus({ text: "Uploading modalities and running inference...", type: "" });
 
       try {
         const formData = new FormData();
-
         formData.append("flair_file", multimodalFiles.flair);
         formData.append("t1_file", multimodalFiles.t1);
         formData.append("t1ce_file", multimodalFiles.t1ce);
         formData.append("t2_file", multimodalFiles.t2);
-
         formData.append("engine", engineMode);
-        formData.append("threshold", threshold);
+        formData.append("threshold", String(thresholdNumeric));
 
-        if (selectedFoldIndices.length) {
+        if (selectedFoldIndices.length > 0) {
           formData.append("ensemble_folds", selectedFoldIndices.join(","));
         }
 
@@ -1104,32 +933,24 @@
         }
 
         setResult(payload);
-        setMeshBuildToken((value) => value + 1);
+        setSceneToken((token) => token + 1);
 
-        const ensembleSuffix = Number.isFinite(payload.inference && payload.inference.ensemble_size)
-          ? ` | Ensemble size: ${payload.inference.ensemble_size}`
-          : "";
-        const taskSuffix = payload.inference && payload.inference.task
-          ? ` | Task: ${payload.inference.task}`
-          : "";
-        const inputSuffix = payload.inference && payload.inference.input_mode
-          ? ` | Input: ${payload.inference.input_mode}`
-          : "";
-        const classSuffix = Array.isArray(payload.class_meshes) && payload.class_meshes.length
-          ? ` | Class meshes: ${payload.class_meshes.length}`
+        const inference = payload.inference || {};
+        const suffix = Number.isFinite(inference.ensemble_size)
+          ? ` | ensemble ${inference.ensemble_size}`
           : "";
 
         setStatus({
-          text: `Done. Engine: ${payload.inference.engine}${ensembleSuffix}${taskSuffix}${inputSuffix}${classSuffix} | Vertices: ${payload.mesh.vertex_count} | Faces: ${payload.mesh.face_count}`,
+          text: `Inference complete with ${inference.engine || "unknown"}${suffix}. Tumor mesh: ${toNumber(payload.mesh && payload.mesh.vertex_count, 0)} vertices.`,
           type: "good",
         });
 
         if (window.anime) {
           anime({
-            targets: ".status-chip",
+            targets: ".status",
             scale: [0.97, 1],
-            opacity: [0.7, 1],
-            duration: 420,
+            opacity: [0.75, 1],
+            duration: 340,
             easing: "easeOutQuad",
           });
         }
@@ -1143,213 +964,531 @@
       }
     }
 
+    async function exportScenePng() {
+      if (!viewerRef.current || !viewerRef.current.data) {
+        setStatus({ text: "Render a scene before exporting image.", type: "bad" });
+        return;
+      }
+
+      try {
+        const imageData = await Plotly.toImage(viewerRef.current, {
+          format: "png",
+          width: 1800,
+          height: 1100,
+          scale: 1,
+        });
+
+        const anchor = document.createElement("a");
+        anchor.href = imageData;
+        anchor.download = `scene_${timestampLabel()}.png`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } catch (error) {
+        setStatus({
+          text: `Scene export failed: ${String(error && error.message ? error.message : error)}`,
+          type: "bad",
+        });
+      }
+    }
+
+    async function exportReportPdf() {
+      if (!reportObject) {
+        setStatus({ text: "Run segmentation before exporting report PDF.", type: "bad" });
+        return;
+      }
+
+      if (!reportCardRef.current) {
+        setStatus({ text: "Report panel is not available for PDF export.", type: "bad" });
+        return;
+      }
+
+      if (!window.html2canvas || !window.jspdf || !window.jspdf.jsPDF) {
+        setStatus({
+          text: "PDF libraries are unavailable in this runtime.",
+          type: "bad",
+        });
+        return;
+      }
+
+      setExportingPdf(true);
+      try {
+        const canvas = await window.html2canvas(reportCardRef.current, {
+          backgroundColor: "#0b111a",
+          scale: 2,
+          useCORS: true,
+        });
+
+        const pdf = new window.jspdf.jsPDF({
+          orientation: "p",
+          unit: "pt",
+          format: "a4",
+        });
+
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+
+        const imageWidth = canvas.width;
+        const imageHeight = canvas.height;
+        const fit = Math.min(pageWidth / imageWidth, (pageHeight - 40) / imageHeight);
+
+        const outWidth = imageWidth * fit;
+        const outHeight = imageHeight * fit;
+
+        const x = (pageWidth - outWidth) / 2;
+        const y = 20;
+
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, outWidth, outHeight, undefined, "FAST");
+        pdf.save(`${reportObject.case_id}_${timestampLabel()}.pdf`);
+      } catch (error) {
+        setStatus({
+          text: `PDF export failed: ${String(error && error.message ? error.message : error)}`,
+          type: "bad",
+        });
+      } finally {
+        setExportingPdf(false);
+      }
+    }
+
+    async function copyExecutiveSummary() {
+      if (!reportObject) {
+        setStatus({ text: "Run segmentation before copying summary.", type: "bad" });
+        return;
+      }
+
+      const text = reportObject.executive_summary || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus({ text: "Executive summary copied to clipboard.", type: "good" });
+      } catch (error) {
+        setStatus({ text: "Clipboard access failed in this browser context.", type: "bad" });
+      }
+    }
+
+    const foldInfoText = useMemo(() => {
+      if (inventoryLoading) {
+        return "Loading checkpoint inventory...";
+      }
+      if (inventoryError) {
+        return inventoryError;
+      }
+      if (!foldEntries.length) {
+        return `No fold checkpoints found. Deep checkpoint available: ${deepAvailable ? "yes" : "no"}`;
+      }
+      return `${selectedFoldIndices.length}/${foldEntries.length} folds selected. Deep checkpoint available: ${deepAvailable ? "yes" : "no"}`;
+    }, [inventoryLoading, inventoryError, foldEntries, selectedFoldIndices, deepAvailable]);
+
     return html`
-      <main className="app-shell">
-        <header className="panel hero reveal">
+      <main className="prime-shell">
+        <header className="prime-card prime-hero reveal">
           <div>
-            <p className="eyebrow">BraTS 3D Pipeline</p>
-            <h1>NeuroScope React Tumor Studio</h1>
+            <p className="kicker">NeuroScope Prime</p>
+            <h1>Clinical 3D Intelligence Studio</h1>
             <p>
-              Upload all four BraTS MRI modalities (.nii/.nii.gz), run segmentation, inspect a rotatable
-              brain-plus-tumor mesh, and compare class-wise volumetrics in one place.
+              A premium, React-first workspace for multimodal BraTS segmentation, cinematic 3D inspection,
+              and decision-grade report generation in one workflow.
             </p>
           </div>
-          <div className="hero-grid">
-            ${heroMetrics.map(
-              (item) => html`
-                <div className="hero-metric" key=${item.key}>
+
+          <div>
+            <div className="hero-kpis">
+              ${heroKpis.map((item) => html`
+                <article className="kpi" key=${item.key}>
                   <span>${item.key}</span>
                   <strong>${item.value}</strong>
-                </div>
-              `,
-            )}
+                </article>
+              `)}
+            </div>
+
+            <div className="control-block" style=${{ marginTop: "10px" }}>
+              <span className="control-label">R3F Experience Module</span>
+              <${HeroR3FExperience} />
+            </div>
           </div>
         </header>
 
-        <section className="workspace">
-          <aside className="panel controls-panel reveal">
-            <h2>Inference Console</h2>
+        <section className="prime-card viewer-card reveal">
+          <div className="card-head">
+            <div>
+              <h2>3D Brain Stage</h2>
+              <p>Interactive scene focused on brain context, tumor anatomy, and class-wise regions.</p>
+            </div>
+            <div className="badge-row">
+              <div className="badge">Engine: ${result && result.inference ? result.inference.engine : "n/a"}</div>
+              <div className="badge">Task: ${result && result.inference ? result.inference.task : "n/a"}</div>
+              <div className="badge">Input: ${result && result.inference ? result.inference.input_mode : "multimodal"}</div>
+            </div>
+          </div>
 
-            <div className="field">
-              <span className="field-label">BraTS modality files (required)</span>
-
-              ${Object.keys(MULTIMODAL_FILE_LABELS).map((key) =>
-                html`
-                  <label className="field" key=${key}>
-                    <span className="field-label">${MULTIMODAL_FILE_LABELS[key]} file</span>
-                    <input
-                      className="input"
-                      type="file"
-                      accept=".nii,.gz,.nii.gz"
-                      onChange=${(event) => {
-                        const picked = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-                        setMultimodalFiles((prev) => ({
-                          ...prev,
-                          [key]: picked,
-                        }));
-                      }}
-                    />
-                  </label>
-                `,
-              )}
-
-              <div className="file-pill">
-                ${Object.entries(MULTIMODAL_FILE_LABELS)
-                  .map(([key, label]) => `${label}: ${multimodalFiles[key] ? multimodalFiles[key].name : "missing"}`)
-                  .join(" | ")}
-              </div>
+          <div className="viewer-layout">
+            <div className="viewer-stage">
+              <div ref=${viewerRef}></div>
+              ${!result ? html`
+                <div className="viewer-overlay">
+                  <div>
+                    <strong>3D scene ready</strong>
+                    Upload four modalities and run segmentation to visualize brain and tumor meshes.
+                  </div>
+                </div>
+              ` : null}
             </div>
 
-            <label className="field">
-              <span className="field-label">Inference engine</span>
+            <aside className="scene-controls">
+              <h3>Scene Controls</h3>
+              <p className="mini-note">
+                Tune transparency, toggle anatomical layers, and export high-resolution stage snapshots.
+              </p>
+
+              <div className="control-block">
+                <label className="toggle-chip">
+                  <input
+                    type="checkbox"
+                    checked=${showBrain}
+                    onChange=${(event) => setShowBrain(event.target.checked)}
+                  />
+                  <span>Show brain context</span>
+                </label>
+              </div>
+
+              <div className="control-block">
+                <label className="toggle-chip">
+                  <input
+                    type="checkbox"
+                    checked=${showTumor}
+                    onChange=${(event) => setShowTumor(event.target.checked)}
+                  />
+                  <span>Show tumor/class layers</span>
+                </label>
+              </div>
+
+              <div className="control-block">
+                <span className="control-label">Brain opacity (${fixed(brainOpacity, 2)})</span>
+                <input
+                  className="range"
+                  type="range"
+                  min="0.05"
+                  max="0.95"
+                  step="0.01"
+                  value=${brainOpacity}
+                  onChange=${(event) => setBrainOpacity(toNumber(event.target.value, 0.34))}
+                />
+              </div>
+
+              <div className="control-block">
+                <span className="control-label">Tumor opacity (${fixed(tumorOpacity, 2)})</span>
+                <input
+                  className="range"
+                  type="range"
+                  min="0.1"
+                  max="1"
+                  step="0.01"
+                  value=${tumorOpacity}
+                  onChange=${(event) => setTumorOpacity(toNumber(event.target.value, 0.83))}
+                />
+              </div>
+
+              <div className="control-block">
+                <span className="control-label">Class visibility</span>
+                <div className="class-row">
+                  ${classMeshesAll.length === 0
+                    ? html`<div className="empty-chip">Run multiclass inference to enable class toggles.</div>`
+                    : classMeshesAll.map((entry) => {
+                        const label = String(entry.label);
+                        return html`
+                          <label className="class-chip" key=${label}>
+                            <input
+                              type="checkbox"
+                              checked=${visibleClassLabels.has(label)}
+                              onChange=${() => toggleClass(label)}
+                            />
+                            <span className="swatch" style=${{ background: entry.color || "#f59e0b" }}></span>
+                            <span>${entry.name || `Class ${label}`}</span>
+                          </label>
+                        `;
+                      })}
+                </div>
+              </div>
+
+              <button type="button" className="btn" onClick=${exportScenePng}>Export Scene PNG</button>
+            </aside>
+          </div>
+        </section>
+
+        <section className="prime-workbench">
+          <aside className="prime-card intake-card reveal">
+            <div className="card-head">
+              <div>
+                <h2>Inference Intake</h2>
+                <p>Multimodal upload, checkpoint selection, and segmentation execution.</p>
+              </div>
+              <div className="badge">${running ? "running" : "idle"}</div>
+            </div>
+
+            <div className="field">
+              <label>BraTS modalities (.nii / .nii.gz)</label>
+              ${Object.keys(MODALITY_LABELS).map((key) => html`
+                <div className="file-row" key=${key}>
+                  <label className="control-label">${MODALITY_LABELS[key]}</label>
+                  <input
+                    className="input"
+                    type="file"
+                    accept=".nii,.nii.gz,.gz"
+                    onChange=${(event) => {
+                      const selected = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+                      setMultimodalFiles((prev) => ({
+                        ...prev,
+                        [key]: selected,
+                      }));
+                    }}
+                  />
+                  <div className="file-pill">
+                    ${multimodalFiles[key] ? multimodalFiles[key].name : "missing"}
+                  </div>
+                </div>
+              `)}
+            </div>
+
+            <div className="field">
+              <label>Inference engine</label>
               <select
                 className="select"
                 value=${engineMode}
                 onChange=${(event) => setEngineMode(event.target.value)}
               >
-                ${ENGINE_OPTIONS.map(
-                  (option) => html`
-                    <option key=${option.value} value=${option.value}>${option.label}</option>
-                  `,
-                )}
+                ${ENGINE_OPTIONS.map((option) => html`
+                  <option key=${option.value} value=${option.value}>${option.label}</option>
+                `)}
               </select>
-            </label>
+            </div>
 
-            <label className="field">
-              <span className="field-label">Mask threshold (deep mode)</span>
+            <div className="field">
+              <label>Threshold</label>
               <input
                 className="number"
                 type="number"
                 min="0.05"
                 max="0.95"
-                step="0.05"
+                step="0.01"
                 value=${threshold}
                 onChange=${(event) => setThreshold(event.target.value)}
               />
-            </label>
-
-            <div className="field">
-              <span className="field-label">Fold checkpoint selector (ensemble)</span>
-              <div className="fold-toolbar">
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled=${inventoryLoading || foldEntries.length === 0}
-                  onClick=${() => setAllFolds(true)}
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled=${inventoryLoading || foldEntries.length === 0}
-                  onClick=${() => setAllFolds(false)}
-                >
-                  Clear all
-                </button>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled=${inventoryLoading}
-                  onClick=${loadCheckpointInventory}
-                >
-                  Refresh inventory
-                </button>
-              </div>
-
-              <div className="fold-cloud">
-                ${
-                  foldEntries.length === 0
-                    ? html`<div className="fold-empty">No fold checkpoints found in models/kfold.</div>`
-                    : foldEntries.map((entry) => {
-                        const foldKey = String(entry.fold_index);
-                        return html`
-                          <label className="fold-chip" key=${foldKey} title=${entry.path || ""}>
-                            <input
-                              type="checkbox"
-                              checked=${selectedFolds.has(foldKey)}
-                              onChange=${() => toggleFold(foldKey)}
-                            />
-                            <span>Fold ${entry.fold_index}</span>
-                          </label>
-                        `;
-                      })
-                }
-              </div>
-              <p className="meta-note">${foldInfoText}</p>
             </div>
 
-            <button type="button" className="action-btn" disabled=${running} onClick=${runSegmentation}>
-              ${running ? "Segmenting..." : "Run 3D Segmentation"}
+            <div className="field">
+              <label>Ensemble fold selector</label>
+              <div className="stack-actions">
+                <button type="button" className="btn btn-soft" disabled=${inventoryLoading || foldEntries.length === 0} onClick=${() => setAllFolds(true)}>
+                  Select all
+                </button>
+                <button type="button" className="btn btn-soft" disabled=${inventoryLoading || foldEntries.length === 0} onClick=${() => setAllFolds(false)}>
+                  Clear
+                </button>
+                <button type="button" className="btn btn-soft" disabled=${inventoryLoading} onClick=${refreshInventory}>
+                  Refresh
+                </button>
+              </div>
+
+              <div className="fold-row">
+                ${foldEntries.length === 0
+                  ? html`<div className="empty-chip">No fold checkpoints discovered.</div>`
+                  : foldEntries.map((entry) => {
+                      const foldKey = String(entry.fold_index);
+                      return html`
+                        <label className="fold-chip" key=${foldKey} title=${entry.path || ""}>
+                          <input
+                            type="checkbox"
+                            checked=${selectedFolds.has(foldKey)}
+                            onChange=${() => toggleFold(foldKey)}
+                          />
+                          <span>Fold ${entry.fold_index}</span>
+                        </label>
+                      `;
+                    })}
+              </div>
+
+              <p className="mini-note">${foldInfoText}</p>
+            </div>
+
+            <button type="button" className="btn btn-primary" disabled=${running} onClick=${runSegmentation}>
+              ${running ? "Running Segmentation..." : "Run Segmentation"}
             </button>
 
-            <div className=${`status-chip ${status.type || ""}`}>${status.text}</div>
+            <div className=${`status ${status.type || ""}`}>
+              ${status.text}
+            </div>
           </aside>
 
-          <div className="stack">
-            <section className="panel viewer-panel reveal">
-              <div className="panel-head">
-                <h2>3D Brain + Tumor/Class Mesh</h2>
-                <div className="panel-pill">
-                  ${result && result.inference && result.inference.task
-                    ? `Task: ${result.inference.task}`
-                    : "Task: n/a"}
+          <div>
+            <section className="prime-card report-card reveal" ref=${reportCardRef}>
+              <div className="card-head">
+                <div>
+                  <h2>Report Forge</h2>
+                  <p>Generate executive, clinical, or technical report packs directly from current inference.</p>
+                </div>
+                <div className="badge">
+                  ${reportObject ? `Case: ${reportObject.case_id}` : "No report yet"}
                 </div>
               </div>
 
-              <div className="viewer-frame" ref=${viewerRef}></div>
+              <div className="report-grid">
+                <article className="report-stat">
+                  <span>Risk band</span>
+                  <strong>${result ? burdenBand(result.metrics && result.metrics.volume_ml) : "n/a"}</strong>
+                </article>
+                <article className="report-stat">
+                  <span>Detected</span>
+                  <strong>${result && result.metrics && result.metrics.detected ? "Yes" : result ? "No" : "n/a"}</strong>
+                </article>
+                <article className="report-stat">
+                  <span>Volume</span>
+                  <strong>${result ? `${fixed(result.metrics && result.metrics.volume_ml, 3)} mL` : "n/a"}</strong>
+                </article>
+                <article className="report-stat">
+                  <span>Scene mesh</span>
+                  <strong>${result ? `${toNumber(result.mesh && result.mesh.vertex_count, 0)} vertices` : "n/a"}</strong>
+                </article>
+              </div>
 
-              <div className="mesh-control-wrap">
-                <h3>Class Mesh Visibility</h3>
-                <div className="class-toggle-row">
-                  ${
-                    allClassMeshes.length === 0
-                      ? html`<div className="mesh-empty">Run multiclass segmentation to enable class mesh toggles.</div>`
-                      : allClassMeshes.map((entry) => {
-                          const label = String(entry.label);
-                          return html`
-                            <label className="class-chip" key=${label}>
-                              <input
-                                type="checkbox"
-                                checked=${visibleClassLabels.has(label)}
-                                onChange=${() => toggleClassLabel(label)}
-                              />
-                              <span
-                                className="class-swatch"
-                                style=${{ "--swatch-color": entry.color || "#f59e0b" }}
-                              ></span>
-                              <span>${entry.name || `Class ${label}`}</span>
-                            </label>
-                          `;
-                        })
-                  }
-                </div>
+              <div className="field">
+                <label>Report tone</label>
+                <select
+                  className="select"
+                  value=${reportTone}
+                  onChange=${(event) => setReportTone(event.target.value)}
+                >
+                  ${REPORT_TONES.map((option) => html`
+                    <option key=${option.value} value=${option.value}>${option.label}</option>
+                  `)}
+                </select>
+              </div>
+
+              <div className="field">
+                <label>Analyst notes</label>
+                <textarea
+                  className="textarea"
+                  value=${reportNotes}
+                  onInput=${(event) => setReportNotes(event.target.value)}
+                  placeholder="Add interpretation notes, recommendations, follow-up items..."
+                ></textarea>
+              </div>
+
+              <div className="stack-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled=${!reportObject}
+                  onClick=${() => {
+                    if (!reportObject) {
+                      return;
+                    }
+                    downloadText(
+                      `${reportObject.case_id}_${timestampLabel()}.json`,
+                      `${JSON.stringify(reportObject, null, 2)}\n`,
+                      "application/json;charset=utf-8",
+                    );
+                  }}
+                >
+                  Export JSON
+                </button>
+
+                <button
+                  type="button"
+                  className="btn"
+                  disabled=${!reportObject}
+                  onClick=${() => {
+                    if (!reportObject) {
+                      return;
+                    }
+                    downloadText(
+                      `${reportObject.case_id}_${timestampLabel()}.md`,
+                      `${markdownPreview}\n`,
+                      "text/markdown;charset=utf-8",
+                    );
+                  }}
+                >
+                  Export Markdown
+                </button>
+
+                <button
+                  type="button"
+                  className="btn"
+                  disabled=${!reportObject || exportingPdf}
+                  onClick=${exportReportPdf}
+                >
+                  ${exportingPdf ? "Exporting PDF..." : "Export PDF"}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn"
+                  disabled=${!reportObject}
+                  onClick=${copyExecutiveSummary}
+                >
+                  Copy Summary
+                </button>
+              </div>
+
+              <div className="preview-box">
+                <pre>${markdownPreview}</pre>
               </div>
             </section>
 
-            <section className="panel metrics-panel reveal">
-              <div className="panel-head">
-                <h2>Quantitative Metrics</h2>
-                <div className="panel-pill">
-                  ${result && result.inference && result.inference.engine
-                    ? `Engine: ${result.inference.engine}`
-                    : "Engine: n/a"}
+            <section className="prime-card metrics-card reveal" style=${{ marginTop: "14px" }}>
+              <div className="card-head">
+                <div>
+                  <h2>Quantitative Board</h2>
+                  <p>Immediate volumetric, confidence, and class-region metrics.</p>
+                </div>
+                <div className="badge">
+                  ${result && result.inference ? `Engine: ${result.inference.engine}` : "Engine: n/a"}
                 </div>
               </div>
 
               <div className="metrics-grid">
-                ${
-                  metricRows.length === 0
-                    ? html`<div className="metric-empty">Run segmentation to view volumetric and class-wise metrics.</div>`
-                    : metricRows.map((row, index) =>
-                        html`
-                          <article className="metric-card" key=${`${row.key}-${index}`}>
-                            <span className="metric-key">${row.key}</span>
-                            <strong className=${`metric-value ${row.tone || ""}`}>${row.value}</strong>
-                          </article>
-                        `,
-                      )
-                }
+                ${metricCards.length === 0
+                  ? html`<div className="empty-chip">Run segmentation to populate the quantitative board.</div>`
+                  : metricCards.map((item, index) => html`
+                      <article className="metric" key=${`${item.key}-${index}`}>
+                        <span>${item.key}</span>
+                        <strong className=${item.tone || ""}>${item.value}</strong>
+                      </article>
+                    `)}
+              </div>
+
+              <div className="class-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Class</th>
+                      <th>Detected</th>
+                      <th>Voxels</th>
+                      <th>Volume (mL)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${classRows.length === 0
+                      ? html`
+                          <tr>
+                            <td colSpan="4" style=${{ color: "#95a3bc" }}>
+                              No class-wise metrics yet.
+                            </td>
+                          </tr>
+                        `
+                      : classRows.map((row) => html`
+                          <tr key=${row.label}>
+                            <td>
+                              <span className="class-name">
+                                <span className="dot" style=${{ background: row.color }}></span>
+                                <span>${row.name}</span>
+                              </span>
+                            </td>
+                            <td>${row.detected ? "yes" : "no"}</td>
+                            <td>${row.voxelCount}</td>
+                            <td>${row.volumeMl === null ? "N/A" : fixed(row.volumeMl, 3)}</td>
+                          </tr>
+                        `)}
+                  </tbody>
+                </table>
               </div>
             </section>
           </div>
