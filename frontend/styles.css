@@ -313,13 +313,6 @@ body {
   border-color: rgba(255,255,255,0.12);
 }
 
-.prime-hero {
-  padding: var(--space-5);
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: var(--space-4);
-}
-
 .prime-header {
   padding: 12px 18px;
   display: grid;
@@ -676,24 +669,6 @@ body {
   text-shadow: 0 0 8px rgba(0, 255, 204, 0.5);
 }
 
-.prime-hero h1 {
-  margin: 8px 0 12px;
-  font-family: var(--font-display);
-  font-size: clamp(2rem, 3vw, 3.5rem);
-  line-height: 1.05;
-  letter-spacing: 0.01em;
-  background: linear-gradient(90deg, #fff, var(--brand-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.prime-hero p {
-  margin: 0;
-  line-height: 1.5;
-  color: var(--ink-1);
-  font-size: 1rem;
-}
-
 .hero-kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -729,13 +704,6 @@ body {
   font-size: 1.15rem;
   font-family: var(--font-display);
   text-shadow: 0 2px 8px rgba(0,0,0,0.5);
-}
-
-.prime-focus {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
-  gap: 12px;
-  margin-bottom: 12px;
 }
 
 .viewer-card,
@@ -1007,22 +975,6 @@ body {
   font-size: 0.85rem;
   padding: 12px;
   text-align: center;
-}
-
-.prime-workbench {
-  display: grid;
-  grid-template-columns: 400px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.reports-layout {
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 12px;
-  overflow: hidden;
-  align-content: start;
 }
 
 .intake-card,
@@ -1335,14 +1287,11 @@ body {
 @media (max-width: 1260px) {
   .prime-header { grid-template-columns: 1fr; gap: 16px; }
   .page-switcher { justify-content: flex-start; }
-  .prime-focus { grid-template-columns: 1fr; }
   .viewer-layout { grid-template-columns: 1fr; }
   .viewer-stage { min-height: 320px; }
   .scene-controls { max-height: none; }
-  .reports-layout { grid-template-columns: 1fr; }
   .generate-layout { grid-template-columns: 1fr; }
   .generate-side { grid-template-rows: minmax(260px, 1fr) minmax(260px, 1fr); }
-  .prime-workbench { grid-template-columns: 1fr; }
   .workflow-login,
   .workflow-intake,
   .workflow-export { width: min(var(--workflow-pane-width-md), 100%); }
