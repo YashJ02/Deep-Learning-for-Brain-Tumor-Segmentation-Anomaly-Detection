@@ -9,11 +9,14 @@ __pycache__/
 # Runtime artifacts
 *.log
 /logs/
-/reports/*
-!/reports/.gitkeep
 
-# Data and model payloads
+# Data payloads (large, download via kagglehub)
 /data/*
 !/data/.gitkeep
-/models/*
-!/models/.gitkeep
+
+# Model checkpoints (tracked in git, except latest.pt duplicates)
+!/models/**
+models/**/latest.pt
+
+# Reports (tracked in git)
+!/reports/**

@@ -3,10 +3,10 @@
 #SBATCH --job-name=brats3d-eval
 #SBATCH --partition=gpu
 #SBATCH --account=your_nurc_project
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=logs/eval_%j.out
 
 set -euo pipefail
@@ -17,7 +17,7 @@ cd "$PROJECT_DIR"
 mkdir -p logs reports
 
 module purge
-module load explorer anaconda3/2024.06 cuda/12.1.1
+module load explorer anaconda3/2024.06 cuda/12.8.0
 
 source .venv/bin/activate
 

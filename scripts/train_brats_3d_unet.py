@@ -105,6 +105,12 @@ def main() -> int:
     )
 
     model = UNet3D(in_channels=4, out_channels=4, base_channels=args.base_channels).to(device)
+
+    # Multi-GPU support: wrap model with DataParallel when multiple GPUs are available.
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs via DataParallel")
+        model = torch.nn.DataParallel(model)
+
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=max(args.epochs, 1))
     scaler = torch.amp.GradScaler(device=device.type, enabled=use_amp and device.type == "cuda")
@@ -116,7 +122,9 @@ def main() -> int:
     if args.resume is not None:
         resume_path = _resolve_path(args.resume, project_root)
         checkpoint = torch.load(str(resume_path), map_location=device)
-        model.load_state_dict(checkpoint["model_state"])
+        # Load into unwrapped model (checkpoint is saved without 'module.' prefix).
+        raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+        raw_model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         if "scheduler_state" in checkpoint:
             scheduler.load_state_dict(checkpoint["scheduler_state"])
@@ -224,10 +232,12 @@ def main() -> int:
         }
         history.append(row)
 
+        # Unwrap DataParallel for clean checkpoint (no 'module.' prefix).
+        raw_model = model.module if isinstance(model, torch.nn.DataParallel) else model
         checkpoint = {
             "epoch": epoch,
             "best_dice": best_dice,
-            "model_state": model.state_dict(),
+            "model_state": raw_model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict(),
             "history": history,

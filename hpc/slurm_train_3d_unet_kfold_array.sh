@@ -8,8 +8,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
+#SBATCH --gres=gpu:h200:1
+#SBATCH --time=08:00:00
 #SBATCH --output=logs/kfold_train_%A_%a.out
 
 set -euo pipefail
@@ -20,13 +20,13 @@ cd "$PROJECT_DIR"
 mkdir -p logs reports models/kfold data/splits/folds
 
 module purge
-module load explorer anaconda3/2024.06 cuda/12.1.1
+module load explorer anaconda3/2024.06 cuda/12.8.0
 
 python -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install -r requirements-train.txt
+python -m pip install -r requirements-train.txt --extra-index-url https://download.pytorch.org/whl/cu128
 
 FOLD_INDEX=${SLURM_ARRAY_TASK_ID}
 

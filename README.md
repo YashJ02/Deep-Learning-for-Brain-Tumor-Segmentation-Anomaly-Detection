@@ -10,6 +10,36 @@ It includes:
 4. Ensemble evaluation and prediction utilities.
 5. HPC Slurm templates (Northeastern Explorer defaults).
 
+## Training Results
+
+Trained on BraTS 2020 (368 cases: 294 train / 74 validation) using a 3D U-Net (5.6M parameters) on an NVIDIA H200 GPU with mixed precision.
+
+### Single Deep Model
+
+| Metric | Score |
+|--------|-------|
+| Mean Dice | 0.7178 (std=0.1309) |
+| Mean IoU | 0.5918 (std=0.1351) |
+| Training Time | 2.13 hours |
+
+### 5-Fold Ensemble
+
+| Metric | Score |
+|--------|-------|
+| **Mean Dice** | **0.9146 (std=0.0395)** |
+| **Mean IoU** | **0.8449 (std=0.0641)** |
+| Training Time | ~2 hours per fold |
+
+### Per-Class Ensemble Performance
+
+| Tumor Region | Dice | IoU |
+|--------------|------|-----|
+| Necrotic/Non-Enhancing Core (label 1) | 0.7587 | 0.6411 |
+| Peritumoral Edema (label 2) | 0.8255 | 0.7127 |
+| Enhancing Tumor (label 4) | 0.7707 | 0.6665 |
+
+Training environment: Python 3.12.4, PyTorch 2.11.0+cu128, CUDA 12.8, NVIDIA H200.
+
 ## Quick Start (One Command)
 
 ### 1) Run full training pipeline from one script
@@ -224,6 +254,7 @@ This repository has been migrated to multimodal multiclass-only behavior across 
 3. `hpc/slurm_eval_3d_unet.sh`: deep-model evaluation job.
 4. `hpc/slurm_train_3d_unet_kfold_array.sh`: 5-fold array training job.
 5. `hpc/slurm_eval_ensemble_3d_unet.sh`: ensemble evaluation job.
+6. `hpc/slurm_download_data.sh`: dataset download job.
 
 ## Installation
 
@@ -380,20 +411,52 @@ Current UI rendering:
 
 ## HPC (Slurm) Usage
 
-Templates are preconfigured for Northeastern Explorer style defaults:
+Templates are preconfigured for Northeastern Explorer defaults:
 
 1. partition: `gpu`
-2. module stack: `explorer anaconda3/2024.06 cuda/12.1.1`
+2. module stack: `explorer anaconda3/2024.06 cuda/12.8.0`
 3. account placeholder: `your_nurc_project` (replace before submit)
+4. GPU: H200 (specify `--gres=gpu:h200:1` for H200 nodes)
 
-Submit examples:
+### Setup on HPC
+
+```bash
+# Clone repo and download data
+git clone https://github.com/YashJ02/Deep-Learning-for-Brain-Tumor-Segmentation-Anomaly-Detection.git
+cd Deep-Learning-for-Brain-Tumor-Segmentation-Anomaly-Detection
+
+# Set your NURC account in all scripts
+sed -i 's/your_nurc_project/YOUR_ACCOUNT/g' hpc/slurm_*.sh
+
+# Download dataset (submit as a job, not on login node)
+sbatch hpc/slurm_download_data.sh
+
+# Fix nested directory after download
+mv data/MICCAI_BraTS2020_TrainingData/BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData/* data/MICCAI_BraTS2020_TrainingData/
+rm -rf data/MICCAI_BraTS2020_TrainingData/BraTS2020_TrainingData
+```
+
+### PyTorch CUDA Compatibility
+
+The H200 nodes on Explorer use CUDA driver 12.8. Install PyTorch with the matching CUDA toolkit:
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+### Submit jobs
 
 ```bash
 sbatch hpc/slurm_train_3d_unet.sh
 sbatch hpc/slurm_eval_3d_unet.sh
 sbatch hpc/slurm_train_3d_unet_kfold_array.sh
 sbatch hpc/slurm_eval_ensemble_3d_unet.sh
+sbatch hpc/slurm_download_data.sh
 ```
+
+### Multi-GPU Support
+
+The training script supports `torch.nn.DataParallel` automatically. When multiple GPUs are available, it wraps the model and distributes batches across devices. Checkpoints are saved without the `module.` prefix for single-GPU compatibility.
 
 ## Troubleshooting
 
