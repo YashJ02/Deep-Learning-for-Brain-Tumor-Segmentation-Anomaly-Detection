@@ -46,7 +46,10 @@ def _prepare_mesh_mask(mask: np.ndarray) -> np.ndarray:
 
     # Remove tiny disconnected blobs that make the viewer look like a point cloud.
     min_size = max(24, int(voxel_count * 0.0008))
-    cleaned = remove_small_objects(binary, max_size=min_size)
+    try:
+        cleaned = remove_small_objects(binary, max_size=min_size)
+    except TypeError:
+        cleaned = remove_small_objects(binary, min_size=min_size)
     if np.any(cleaned):
         binary = cleaned
 
@@ -58,43 +61,54 @@ def build_mesh_from_mask(
     spacing: Tuple[float, float, float],
     target_max_dim: int = 128,
 ) -> Dict[str, object]:
-    if not np.any(mask):
+    def _empty(shape: Tuple[int, ...]) -> Dict[str, object]:
         return {
             "vertices": [],
             "faces": [],
             "vertex_count": 0,
             "face_count": 0,
-            "mesh_shape": [int(x) for x in mask.shape],
+            "mesh_shape": [int(x) for x in shape],
         }
+
+    if not np.any(mask):
+        return _empty(mask.shape)
 
     prepared = _prepare_mesh_mask(mask)
     if not np.any(prepared):
-        return {
-            "vertices": [],
-            "faces": [],
-            "vertex_count": 0,
-            "face_count": 0,
-            "mesh_shape": [int(x) for x in mask.shape],
-        }
+        return _empty(mask.shape)
 
     mesh_mask, mesh_spacing = _downsample_mask(prepared, spacing, target_max_dim=target_max_dim)
     if not np.any(mesh_mask):
-        return {
-            "vertices": [],
-            "faces": [],
-            "vertex_count": 0,
-            "face_count": 0,
-            "mesh_shape": [int(x) for x in mesh_mask.shape],
-        }
+        return _empty(mesh_mask.shape)
 
     smooth_volume = gaussian(mesh_mask.astype(np.float32), sigma=0.8, preserve_range=True)
-    vertices, faces, _, _ = marching_cubes(
-        smooth_volume,
-        level=0.35,
-        spacing=mesh_spacing,
-        step_size=1,
-        allow_degenerate=False,
-    )
+
+    # Add a thin zero-valued border so surfaces touching volume boundaries
+    # remain extractable and marching-cubes level selection stays valid.
+    padded_volume = np.pad(smooth_volume, pad_width=1, mode="constant", constant_values=0.0)
+    value_min = float(np.min(padded_volume))
+    value_max = float(np.max(padded_volume))
+    if (not np.isfinite(value_min)) or (not np.isfinite(value_max)) or value_max <= value_min:
+        return _empty(mesh_mask.shape)
+
+    epsilon = max(1e-6, (value_max - value_min) * 1e-6)
+    level = min(max(0.35, value_min + epsilon), value_max - epsilon)
+    if not np.isfinite(level):
+        return _empty(mesh_mask.shape)
+
+    try:
+        vertices, faces, _, _ = marching_cubes(
+            padded_volume,
+            level=float(level),
+            spacing=mesh_spacing,
+            step_size=1,
+            allow_degenerate=False,
+        )
+    except ValueError:
+        return _empty(mesh_mask.shape)
+
+    # Marching-cubes ran on padded coordinates, so shift the mesh back.
+    vertices = vertices - np.asarray(mesh_spacing, dtype=np.float32)
 
     vertices = np.round(vertices, 3)
 

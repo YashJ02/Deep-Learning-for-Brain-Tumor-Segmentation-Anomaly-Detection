@@ -217,6 +217,10 @@ def _preferred_multiclass_checkpoint(explicit_checkpoint_path: Optional[str]) ->
     return None
 
 
+def preferred_deep_checkpoint_path(explicit_checkpoint_path: Optional[str] = None) -> Optional[Path]:
+    return _preferred_multiclass_checkpoint(explicit_checkpoint_path)
+
+
 def _extract_fold_index(path: Path) -> Optional[int]:
     folder = path.parent.name
     if not folder.startswith("fold_"):
@@ -285,7 +289,7 @@ def segment_tumor(
     if engine not in {"all", "auto", "deep", "ensemble", "baseline"}:
         raise ValueError("engine must be one of: all, auto, deep, ensemble, baseline")
 
-    checkpoint = Path(checkpoint_path).resolve() if checkpoint_path else default_checkpoint_path().resolve()
+    deep_checkpoint = _preferred_multiclass_checkpoint(checkpoint_path)
     ensemble_paths = list(ensemble_checkpoint_paths) if ensemble_checkpoint_paths is not None else default_ensemble_checkpoint_paths()
     compatible_ensemble_paths = _multiclass_only(ensemble_paths)
 
@@ -371,19 +375,19 @@ def segment_tumor(
             )
 
     if engine in {"auto", "deep"}:
-        if checkpoint.exists():
+        if deep_checkpoint is not None:
             try:
                 from training.inference import segment_with_checkpoint
 
                 deep_mask, details = segment_with_checkpoint(
                     volume=volume,
-                    checkpoint_path=checkpoint,
+                    checkpoint_path=deep_checkpoint,
                     threshold=threshold,
                 )
                 class_label_map = details.pop("_class_label_map", None)
                 return deep_mask.astype(bool), {
                     "engine": "deep",
-                    "checkpoint": str(checkpoint),
+                    "checkpoint": str(deep_checkpoint),
                     "fold_indices": [],
                     **{key: value for key, value in details.items() if not key.startswith("_")},
                 }, class_label_map
@@ -391,7 +395,11 @@ def segment_tumor(
                 if engine == "deep":
                     raise RuntimeError(f"Deep model inference failed: {exc}") from exc
         elif engine == "deep":
-            raise FileNotFoundError(f"Deep-model checkpoint was not found: {checkpoint}")
+            candidate_paths = [str(path) for path in _candidate_deep_checkpoints(checkpoint_path)]
+            raise FileNotFoundError(
+                "No compatible multimodal multiclass deep-model checkpoint found. "
+                f"Checked candidates: {candidate_paths}"
+            )
 
     baseline_mask = segment_tumor_baseline(volume)
     return baseline_mask.astype(bool), {

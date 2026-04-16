@@ -17,6 +17,7 @@ from .segmentation import (
     default_checkpoint_path,
     extract_brain_mask,
     load_multimodal_nifti_volumes,
+    preferred_deep_checkpoint_path,
     resolve_ensemble_checkpoint_paths,
     segment_tumor,
 )
@@ -67,14 +68,15 @@ def _parse_fold_indices(raw_value: str) -> list[int] | None:
 
 @app.get("/api/checkpoints")
 def checkpoint_inventory() -> dict:
-    deep_checkpoint = default_checkpoint_path()
+    deep_checkpoint = preferred_deep_checkpoint_path()
+    deep_path = deep_checkpoint if deep_checkpoint is not None else default_checkpoint_path()
     fold_entries = available_fold_checkpoints()
 
     return {
         "status": "ok",
         "deep": {
-            "path": str(deep_checkpoint),
-            "exists": deep_checkpoint.exists(),
+            "path": str(deep_path),
+            "exists": deep_checkpoint is not None,
         },
         "ensemble": {
             "count": len(fold_entries),
